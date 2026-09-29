@@ -1,0 +1,23 @@
+﻿name: lasttime
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: lasttime-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lasttime}
+      POSTGRES_USER: ${POSTGRES_USER:-lasttime}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - lasttime_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lasttime} -d ${POSTGRES_DB:-lasttime}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  lasttime_pgdata:
