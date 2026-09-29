@@ -4,7 +4,8 @@ using LastTime.Api.Features.Items;
 
 namespace LastTime.Api.Tests;
 
-public class ItemsApiTests(ApiFactory factory) : IClassFixture<ApiFactory>, IAsyncLifetime
+[Collection(ApiCollection.Name)]
+public class ItemsApiTests(ApiFactory factory) : IAsyncLifetime
 {
     private readonly HttpClient _client = factory.CreateClient();
 
@@ -118,4 +119,5 @@ public class ItemsApiTests(ApiFactory factory) : IClassFixture<ApiFactory>, IAsy
         Assert.Equal(HttpStatusCode.NotFound, (await _client.DeleteAsync($"/api/items/{created.Id}")).StatusCode);
     }
 }
+
 

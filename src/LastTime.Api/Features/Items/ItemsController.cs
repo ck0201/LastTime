@@ -1,5 +1,6 @@
 ﻿using LastTime.Api.Data;
 using LastTime.Api.Domain;
+using LastTime.Api.Features.History;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,8 +10,6 @@ namespace LastTime.Api.Features.Items;
 [Route("api/items")]
 public class ItemsController(LastTimeDbContext db) : ControllerBase
 {
-    private const string LikeEscape = "\\";
-
     [HttpGet]
     public async Task<ActionResult<List<ItemResponse>>> Search([FromQuery] string? search, CancellationToken ct)
     {
@@ -18,10 +17,10 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var pattern = $"%{EscapeLike(search.Trim())}%";
+            var pattern = LikePattern.Contains(search);
             query = query.Where(i =>
-                EF.Functions.ILike(i.Name, pattern, LikeEscape) ||
-                (i.Description != null && EF.Functions.ILike(i.Description, pattern, LikeEscape)));
+                EF.Functions.ILike(i.Name, pattern, LikePattern.EscapeChar) ||
+                (i.Description != null && EF.Functions.ILike(i.Description, pattern, LikePattern.EscapeChar)));
         }
 
         return await query
@@ -31,10 +30,18 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<ItemResponse>> GetById(Guid id, CancellationToken ct)
+    public async Task<ActionResult<ItemDetailResponse>> GetById(Guid id, CancellationToken ct)
     {
         var item = await db.Items.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
-        return item is null ? NotFound() : ItemResponse.From(item);
+        if (item is null) return NotFound();
+
+        var history = await db.HistoryEntries.AsNoTracking()
+            .Where(e => e.ItemId == id)
+            .NewestFirst()
+            .ToListAsync(ct);
+
+        return new ItemDetailResponse(item.Id, item.Name, item.Description, item.CreatedAt,
+            history.ConvertAll(HistoryEntryResponse.From));
     }
 
     [HttpPost]
@@ -72,9 +79,6 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     }
 
     private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
-
-    // Escape LIKE wildcards so user input is matched literally.
-    private static string EscapeLike(string s) =>
-        s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 }
+
 
