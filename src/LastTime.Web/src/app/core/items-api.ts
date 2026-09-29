@@ -1,17 +1,24 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
-import { HistoryEntry, HistoryEntryRequest, Item, ItemDetail, ItemRequest } from './models';
+import { Observable, catchError, of, throwError } from 'rxjs';
+import { HistoryEntry, HistoryEntryRequest, Item, ItemDetail, ItemRequest, ItemSummary } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ItemsApi {
   private readonly http = inject(HttpClient);
   private readonly base = '/api/items';
 
-  list(search = ''): Observable<Item[]> {
+  list(search = ''): Observable<ItemSummary[]> {
     const term = search.trim();
     const params = term ? new HttpParams().set('search', term) : undefined;
-    return this.http.get<Item[]>(this.base, { params });
+    return this.http.get<ItemSummary[]>(this.base, { params });
+  }
+
+  /** "When did I last…?" — the latest entry whose action contains `action`, or null if there is none. */
+  last(itemId: string, action: string): Observable<HistoryEntry | null> {
+    return this.http
+      .get<HistoryEntry>(`${this.base}/${itemId}/history/last`, { params: new HttpParams().set('action', action.trim()) })
+      .pipe(catchError((e: HttpErrorResponse) => (e.status === 404 ? of(null) : throwError(() => e))));
   }
 
   get(id: string): Observable<ItemDetail> {

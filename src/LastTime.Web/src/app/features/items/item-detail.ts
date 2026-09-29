@@ -1,10 +1,17 @@
 import { CurrencyPipe, DatePipe } from '@angular/common';
-import { Component, inject, input, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, input, OnInit, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
-import { costFormat } from '../../core/format';
+import { costFormat, relativeDate } from '../../core/format';
 import { ItemsApi } from '../../core/items-api';
-import { HistoryEntryRequest, ItemDetail } from '../../core/models';
+import { HistoryEntry, HistoryEntryRequest, ItemDetail } from '../../core/models';
+
+type Lookup =
+  | { status: 'idle' }
+  | { status: 'loading'; term: string }
+  | { status: 'found'; term: string; entry: HistoryEntry }
+  | { status: 'none'; term: string }
+  | { status: 'error'; term: string };
 import { HistoryEntryForm } from '../history/history-entry-form';
 
 @Component({
@@ -35,12 +42,49 @@ export class ItemDetailPage implements OnInit {
   protected readonly actionError = signal<string | null>(null);
 
   protected readonly costFormat = costFormat;
+  protected readonly relativeDate = relativeDate;
+
+  /** "When did I last…?" lookup. */
+  protected readonly lookupTerm = signal('');
+  protected readonly lookup = signal<Lookup>({ status: 'idle' });
+
+  /** Distinct actions already used on this item (case-insensitive), most recent first — offered as shortcuts. */
+  protected readonly actionShortcuts = computed(() => {
+    const seen = new Map<string, string>();
+    for (const e of this.item()?.history ?? []) {
+      const key = e.action.toLowerCase();
+      if (!seen.has(key)) seen.set(key, e.action);
+    }
+    return [...seen.values()];
+  });
 
   ngOnInit(): void {
     this.load();
   }
 
+  protected onLookupInput(event: Event): void {
+    this.lookupTerm.set((event.target as HTMLInputElement).value);
+  }
+
+  protected onLookupSubmit(event: Event): void {
+    event.preventDefault();
+    this.runLookup(this.lookupTerm());
+  }
+
+  protected runLookup(action: string): void {
+    const term = action.trim();
+    if (!term) return;
+
+    this.lookupTerm.set(term);
+    this.lookup.set({ status: 'loading', term });
+    this.api.last(this.id(), term).subscribe({
+      next: (entry) => this.lookup.set(entry ? { status: 'found', term, entry } : { status: 'none', term }),
+      error: () => this.lookup.set({ status: 'error', term }),
+    });
+  }
+
   private load(): void {
+    this.lookup.set({ status: 'idle' }); // history may have changed, so an old answer could be stale
     this.api.get(this.id()).subscribe({
       next: (item) => {
         this.item.set(item);

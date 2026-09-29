@@ -29,6 +29,61 @@
     <p class="notice notice-error">{{ actionError() }}</p>
   }
 
+  @if (it.history.length > 0) {
+    <section class="lookup">
+      <h2>When did I last…?</h2>
+      <form (submit)="onLookupSubmit($event)" class="lookup-form">
+        <input
+          type="search"
+          class="search"
+          placeholder="e.g. service"
+          aria-label="Action to look up"
+          [value]="lookupTerm()"
+          (input)="onLookupInput($event)"
+        />
+        <button type="submit" class="btn btn-primary" [disabled]="!lookupTerm().trim()">Find</button>
+      </form>
+
+      <div class="chips">
+        @for (a of actionShortcuts(); track a) {
+          <button type="button" class="chip" (click)="runLookup(a)">{{ a }}</button>
+        }
+      </div>
+
+      @let l = lookup();
+      @switch (l.status) {
+        @case ('loading') {
+          <p class="muted">Looking…</p>
+        }
+        @case ('none') {
+          <p class="muted">Nothing on record matching “{{ l.term }}”.</p>
+        }
+        @case ('error') {
+          <p class="notice notice-error">Couldn't look that up. Please try again.</p>
+        }
+        @case ('found') {
+          <div class="answer">
+            <div class="answer-when">
+              Last “{{ l.term }}”: <strong>{{ l.entry.date | date: 'dd MMM yyyy' }}</strong>{{ ' ' }}<span class="muted">({{ relativeDate(l.entry.date) }})</span>
+            </div>
+            <div>
+              <strong>{{ l.entry.action }}</strong>
+              @if (l.entry.cost !== null) {
+                · {{ l.entry.cost | currency: 'INR' : 'symbol' : costFormat(l.entry.cost) }}
+              }
+              @if (l.entry.provider) {
+                · {{ l.entry.provider }}
+              }
+            </div>
+            @if (l.entry.notes) {
+              <div class="muted">{{ l.entry.notes }}</div>
+            }
+          </div>
+        }
+      }
+    </section>
+  }
+
   <div class="section-head">
     <h2>History</h2>
     @if (!adding()) {

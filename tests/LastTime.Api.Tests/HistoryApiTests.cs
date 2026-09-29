@@ -228,6 +228,43 @@ public class HistoryApiTests(ApiFactory factory) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task List_IncludesEachItemsLastEntry_OrNullWhenNoHistory()
+    {
+        var ac = await CreateItemAsync("LG AC");
+        var laptop = await CreateItemAsync("Laptop");
+        await CreateItemAsync("Bike");   // no history
+        await AddAsync(ac.Id, "2024-03-14", "Purchased", 38999m);
+        await AddAsync(ac.Id, "2026-08-12", "Serviced", 850m, "CoolCare Services");
+        await AddAsync(ac.Id, "2026-02-03", "Repaired", 1200m);
+        await AddAsync(laptop.Id, "2025-01-10", "Purchased", 60000m);
+        await AddAsync(laptop.Id, "2025-06-01", "Screen repair");
+        await AddAsync(laptop.Id, "2025-06-01", "Battery replaced");   // same date, recorded later
+
+        var items = (await _client.GetFromJsonAsync<List<ItemSummaryResponse>>("/api/items"))!;
+
+        Assert.Equal(["Bike", "Laptop", "LG AC"], items.Select(i => i.Name));
+        Assert.Null(items[0].LastEntry);
+        Assert.Equal("Battery replaced", items[1].LastEntry!.Action);
+        Assert.Equal("Serviced", items[2].LastEntry!.Action);
+        Assert.Equal(850m, items[2].LastEntry!.Cost);
+        Assert.Equal("CoolCare Services", items[2].LastEntry!.Provider);
+    }
+
+    [Fact]
+    public async Task List_Search_StillFiltersAndKeepsLastEntry()
+    {
+        var ac = await CreateItemAsync("LG AC");
+        await CreateItemAsync("Laptop");
+        await AddAsync(ac.Id, "2026-08-12", "Serviced");
+
+        var items = await _client.GetFromJsonAsync<List<ItemSummaryResponse>>("/api/items?search=ac");
+
+        var only = Assert.Single(items!);
+        Assert.Equal("LG AC", only.Name);
+        Assert.Equal("Serviced", only.LastEntry!.Action);
+    }
+
+    [Fact]
     public async Task DeletingItem_DeletesItsHistory()
     {
         var item = await CreateItemAsync();

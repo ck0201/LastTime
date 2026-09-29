@@ -36,7 +36,18 @@
           @if (item.description) {
             <span class="card-sub">{{ item.description }}</span>
           }
-          <span class="card-meta">Added {{ item.createdAt | date: 'dd MMM yyyy' }}</span>
+          @if (item.lastEntry; as last) {
+            <span class="card-last">
+              <span class="card-last-label">Last:</span>{{ ' ' }}<strong>{{ last.action }}</strong>
+              · {{ last.date | date: 'dd MMM yyyy' }}
+              <span class="muted">({{ relativeDate(last.date) }})</span>
+              @if (last.cost !== null) {
+                · {{ last.cost | currency: 'INR' : 'symbol' : costFormat(last.cost) }}
+              }
+            </span>
+          } @else {
+            <span class="card-meta">No history yet</span>
+          }
         </a>
       </li>
     }

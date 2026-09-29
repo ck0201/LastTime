@@ -14,5 +14,9 @@ public record ItemResponse(Guid Id, string Name, string? Description, DateTimeOf
 }
 
 
+/// <summary>List row: the item plus its most recent history entry (null if it has none).</summary>
+public record ItemSummaryResponse(
+    Guid Id, string Name, string? Description, DateTimeOffset CreatedAt, HistoryEntryResponse? LastEntry);
+
 public record ItemDetailResponse(
     Guid Id, string Name, string? Description, DateTimeOffset CreatedAt, List<HistoryEntryResponse> History);

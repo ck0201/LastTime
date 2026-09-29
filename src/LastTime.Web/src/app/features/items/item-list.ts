@@ -1,23 +1,27 @@
-import { DatePipe } from '@angular/common';
+import { CurrencyPipe, DatePipe } from '@angular/common';
 import { Component, inject, signal } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { catchError, debounceTime, map, of, startWith, switchMap } from 'rxjs';
+import { costFormat, relativeDate } from '../../core/format';
 import { ItemsApi } from '../../core/items-api';
-import { Item } from '../../core/models';
+import { ItemSummary } from '../../core/models';
 
 interface ListState {
   status: 'loading' | 'ok' | 'error';
-  items: Item[];
+  items: ItemSummary[];
 }
 
 @Component({
   selector: 'app-item-list',
-  imports: [RouterLink, DatePipe],
+  imports: [RouterLink, DatePipe, CurrencyPipe],
   templateUrl: './item-list.html',
 })
 export class ItemList {
   private readonly api = inject(ItemsApi);
+
+  protected readonly costFormat = costFormat;
+  protected readonly relativeDate = relativeDate;
 
   protected readonly search = signal('');
 

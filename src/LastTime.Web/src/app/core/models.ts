@@ -17,6 +17,11 @@ export interface HistoryEntry {
   createdAt: string;
 }
 
+export interface ItemSummary extends Item {
+  /** The most recent history entry, or null if the item has none. */
+  lastEntry: HistoryEntry | null;
+}
+
 export interface ItemDetail extends Item {
   /** Newest first. */
   history: HistoryEntry[];

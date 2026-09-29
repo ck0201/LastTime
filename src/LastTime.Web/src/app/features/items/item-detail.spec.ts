@@ -1,5 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { ItemDetail } from '../../core/models';
@@ -49,6 +50,63 @@ describe('ItemDetailPage', () => {
     expect(text).toContain('12 Aug 2026');
     expect(text).toContain('CoolCare Services');
     expect(text).toContain('Gas checked');
+  });
+
+  describe('"when did I last…?" lookup', () => {
+    async function renderWithHttp() {
+      const root = await render(detail);
+      return { root, http: TestBed.inject(HttpTestingController) };
+    }
+
+    it('offers each distinct action once as a shortcut', async () => {
+      const root = await render({
+        ...detail,
+        history: [
+          { ...detail.history[0], id: 'a', action: 'Serviced' },
+          { ...detail.history[0], id: 'b', action: 'serviced' },
+          { ...detail.history[1], id: 'c', action: 'Purchased' },
+        ],
+      });
+      const chips = Array.from(root.querySelectorAll('.chip')).map((c) => c.textContent?.trim());
+      expect(chips).toEqual(['Serviced', 'Purchased']);
+    });
+
+    it('answers with the date, cost and provider when a shortcut is clicked', async () => {
+      const { root, http } = await renderWithHttp();
+
+      root.querySelector<HTMLButtonElement>('.chip')!.click();
+      const req = http.expectOne((r) => r.url === '/api/items/i1/history/last');
+      expect(req.request.params.get('action')).toBe('Serviced');
+      req.flush(detail.history[0]);
+      await TestBed.inject(ApplicationRef).whenStable();
+
+      const answer = root.querySelector('.answer')!.textContent!.replace(/\s+/g, ' ');
+      expect(answer).toContain('12 Aug 2026');
+      expect(answer).toContain('₹850');
+      expect(answer).toContain('CoolCare Services');
+      expect(answer).toContain('Gas checked');
+    });
+
+    it('says so when nothing matches', async () => {
+      const { root, http } = await renderWithHttp();
+
+      const input = root.querySelector<HTMLInputElement>('.lookup input')!;
+      input.value = 'painted';
+      input.dispatchEvent(new Event('input'));
+      await TestBed.inject(ApplicationRef).whenStable();
+      root.querySelector<HTMLFormElement>('.lookup form')!.dispatchEvent(new Event('submit'));
+
+      http.expectOne((r) => r.url === '/api/items/i1/history/last')
+        .flush('none', { status: 404, statusText: 'Not Found' });
+      await TestBed.inject(ApplicationRef).whenStable();
+
+      expect(root.querySelector('.lookup')!.textContent).toContain('Nothing on record matching “painted”');
+    });
+
+    it('does not offer the lookup when the item has no history', async () => {
+      const root = await render({ ...detail, history: [] });
+      expect(root.querySelector('.lookup')).toBeNull();
+    });
   });
 
   it('shows an empty state when there is no history', async () => {

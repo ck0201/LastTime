@@ -30,6 +30,28 @@ describe('ItemsApi', () => {
     req.flush([]);
   });
 
+  it('last() returns the entry, and null when the API says 404', () => {
+    let result: unknown = 'unset';
+    api.last('item-1', ' service ').subscribe((r) => (result = r));
+    const hit = http.expectOne((r) => r.url === '/api/items/item-1/history/last');
+    expect(hit.request.params.get('action')).toBe('service');
+    hit.flush({ id: 'e1', action: 'Serviced' });
+    expect(result).toEqual({ id: 'e1', action: 'Serviced' });
+
+    api.last('item-1', 'painted').subscribe((r) => (result = r));
+    http.expectOne((r) => r.url === '/api/items/item-1/history/last')
+      .flush('none', { status: 404, statusText: 'Not Found' });
+    expect(result).toBeNull();
+  });
+
+  it('last() still surfaces real errors', () => {
+    let failed = false;
+    api.last('item-1', 'service').subscribe({ error: () => (failed = true) });
+    http.expectOne((r) => r.url === '/api/items/item-1/history/last')
+      .flush('boom', { status: 500, statusText: 'Server Error' });
+    expect(failed).toBe(true);
+  });
+
   it('posts a new history entry under the item', () => {
     const body = { date: '2026-08-12', action: 'Serviced', cost: 850, provider: null, notes: null };
     api.addEntry('item-1', body).subscribe();

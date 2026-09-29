@@ -11,7 +11,7 @@ namespace LastTime.Api.Features.Items;
 public class ItemsController(LastTimeDbContext db) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<List<ItemResponse>>> Search([FromQuery] string? search, CancellationToken ct)
+    public async Task<ActionResult<List<ItemSummaryResponse>>> Search([FromQuery] string? search, CancellationToken ct)
     {
         var query = db.Items.AsNoTracking();
 
@@ -23,10 +23,24 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
                 (i.Description != null && EF.Functions.ILike(i.Description, pattern, LikePattern.EscapeChar)));
         }
 
-        return await query
+        // One query: each item with its newest history entry (same ordering as the timeline).
+        var rows = await query
             .OrderBy(i => i.Name.ToLower())
-            .Select(i => new ItemResponse(i.Id, i.Name, i.Description, i.CreatedAt))
+            .Select(i => new
+            {
+                Item = i,
+                Last = i.History
+                    .OrderByDescending(h => h.Date)
+                    .ThenByDescending(h => h.CreatedAt)
+                    .FirstOrDefault(),
+            })
             .ToListAsync(ct);
+
+        return rows
+            .Select(r => new ItemSummaryResponse(
+                r.Item.Id, r.Item.Name, r.Item.Description, r.Item.CreatedAt,
+                r.Last is null ? null : HistoryEntryResponse.From(r.Last)))
+            .ToList();
     }
 
     [HttpGet("{id:guid}")]
