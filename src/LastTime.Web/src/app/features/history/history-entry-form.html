@@ -1,0 +1,50 @@
+<form [formGroup]="form" (ngSubmit)="submit()" class="form form-inline-card" novalidate>
+  <div class="row">
+    <label>
+      <span>Date</span>
+      <input type="date" formControlName="date" />
+      @if (form.controls.date.touched && form.controls.date.invalid) {
+        <small class="field-error">Pick a date.</small>
+      }
+    </label>
+
+    <label class="grow">
+      <span>What happened?</span>
+      <input type="text" formControlName="action" placeholder="e.g. Serviced, Repaired, Purchased" maxlength="100" />
+      @if (form.controls.action.touched && form.controls.action.invalid) {
+        <small class="field-error">Describe the action.</small>
+      }
+    </label>
+  </div>
+
+  <div class="row">
+    <label>
+      <span>Cost (₹) <em class="muted">(optional)</em></span>
+      <input type="number" formControlName="cost" min="0" step="0.01" inputmode="decimal" />
+      @if (form.controls.cost.invalid) {
+        <small class="field-error">Cost can't be negative.</small>
+      }
+    </label>
+
+    <label class="grow">
+      <span>Provider / person <em class="muted">(optional)</em></span>
+      <input type="text" formControlName="provider" maxlength="200" />
+    </label>
+  </div>
+
+  <label>
+    <span>Notes <em class="muted">(optional)</em></span>
+    <textarea formControlName="notes" rows="2" maxlength="2000"></textarea>
+  </label>
+
+  @if (error()) {
+    <p class="notice notice-error">{{ error() }}</p>
+  }
+
+  <div class="actions">
+    <button type="submit" class="btn btn-primary" [disabled]="saving()">
+      {{ saving() ? 'Saving…' : entry() ? 'Save changes' : 'Add entry' }}
+    </button>
+    <button type="button" class="btn" (click)="cancelled.emit()">Cancel</button>
+  </div>
+</form>

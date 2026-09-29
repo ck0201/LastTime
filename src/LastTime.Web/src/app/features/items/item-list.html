@@ -1,0 +1,44 @@
+<div class="page-head">
+  <h1>Your items</h1>
+  <a routerLink="/items/new" class="btn btn-primary">+ New item</a>
+</div>
+
+<input
+  type="search"
+  class="search"
+  placeholder="Search items…"
+  aria-label="Search items"
+  [value]="search()"
+  (input)="onSearch($event)"
+/>
+
+@let s = state();
+@if (s.status === 'error') {
+  <p class="notice notice-error">Couldn't load items. Is the API running?</p>
+} @else if (s.status === 'loading' && s.items.length === 0) {
+  <p class="muted">Loading…</p>
+} @else if (s.items.length === 0) {
+  @if (search().trim()) {
+    <p class="muted">No items match “{{ search().trim() }}”.</p>
+  } @else {
+    <div class="empty">
+      <p>Nothing here yet.</p>
+      <p class="muted">Add something you own or use, then record what happens to it over time.</p>
+      <a routerLink="/items/new" class="btn btn-primary">Add your first item</a>
+    </div>
+  }
+} @else {
+  <ul class="cards">
+    @for (item of s.items; track item.id) {
+      <li>
+        <a class="card" [routerLink]="['/items', item.id]">
+          <span class="card-title">{{ item.name }}</span>
+          @if (item.description) {
+            <span class="card-sub">{{ item.description }}</span>
+          }
+          <span class="card-meta">Added {{ item.createdAt | date: 'dd MMM yyyy' }}</span>
+        </a>
+      </li>
+    }
+  </ul>
+}

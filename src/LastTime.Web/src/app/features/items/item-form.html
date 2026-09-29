@@ -1,0 +1,36 @@
+<h1>{{ id() ? 'Edit item' : 'New item' }}</h1>
+
+@if (loading()) {
+  <p class="muted">Loading…</p>
+} @else {
+  <form [formGroup]="form" (ngSubmit)="submit()" class="form" novalidate>
+    <label>
+      <span>Name</span>
+      <input type="text" formControlName="name" placeholder="e.g. LG AC" maxlength="200" />
+      @if (form.controls.name.touched && form.controls.name.invalid) {
+        <small class="field-error">Give the item a name.</small>
+      }
+    </label>
+
+    <label>
+      <span>Description <em class="muted">(optional)</em></span>
+      <textarea
+        formControlName="description"
+        rows="3"
+        placeholder="Model number, location, anything that helps you recognise it"
+        maxlength="2000"
+      ></textarea>
+    </label>
+
+    @if (error()) {
+      <p class="notice notice-error">{{ error() }}</p>
+    }
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary" [disabled]="saving()">
+        {{ saving() ? 'Saving…' : 'Save' }}
+      </button>
+      <a class="btn" [routerLink]="id() ? ['/items', id()] : '/'">Cancel</a>
+    </div>
+  </form>
+}
