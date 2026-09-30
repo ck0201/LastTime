@@ -1,5 +1,9 @@
-﻿using LastTime.Api.Data;
+﻿using System.Text;
+using LastTime.Api.Data;
+using LastTime.Api.Features.Auth;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +27,30 @@ builder.Services.AddCors(options => options.AddPolicy(CorsPolicyName, policy => 
     .WithOrigins(allowedOrigins)
     .WithMethods("GET", "POST", "PUT", "DELETE") // OPTIONS preflight is answered by the CORS middleware
     .AllowAnyHeader()));
+// JWT settings come from the "Jwt" section. The secret is supplied per environment (user-secrets locally,
+// the Jwt__Secret environment variable on Render) and must never be committed.
+var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
+if (jwt.Secret.Length < JwtOptions.MinSecretLength)
+    throw new InvalidOperationException(
+        $"Jwt:Secret must be configured and at least {JwtOptions.MinSecretLength} characters long.");
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.MapInboundClaims = false; // keep "sub" and "email" as issued
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Secret)),
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero,
+        };
+    });
+builder.Services.AddAuthorization();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -33,6 +61,7 @@ app.MapOpenApi();
 
 app.UseCors(CorsPolicyName);
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

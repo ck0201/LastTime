@@ -11,3 +11,9 @@ public record RegisterResponse(Guid Id, string Email, DateTimeOffset CreatedAt)
 {
     public static RegisterResponse From(User u) => new(u.Id, u.Email, u.CreatedAt);
 }
+
+public record LoginRequest(
+    [Required, StringLength(320)] string Email,
+    [Required, StringLength(128)] string Password);
+
+public record LoginResponse(string Token);

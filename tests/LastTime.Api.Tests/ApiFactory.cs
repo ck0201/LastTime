@@ -1,5 +1,6 @@
 ﻿using LastTime.Api.Data;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,8 +16,21 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.GetEnvironmentVariable("LASTTIME_TEST_CONNECTION")
         ?? "Host=127.0.0.1;Port=5433;Database=lasttime_test;Username=lasttime;Password=lasttime_dev_password";
 
-    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder) =>
+    // Test-only JWT settings; not a real secret.
+    public const string JwtSecret = "test-only-secret-key-for-integration-tests-0123456789";
+    public const string JwtIssuer = "last-time-tests";
+    public const string JwtAudience = "last-time-tests-audience";
+
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
         builder.UseSetting("ConnectionStrings:Default", ConnectionString);
+        builder.UseSetting("Jwt:Secret", JwtSecret);
+        builder.UseSetting("Jwt:Issuer", JwtIssuer);
+        builder.UseSetting("Jwt:Audience", JwtAudience);
+        builder.UseSetting("Jwt:ExpirationMinutes", "60");
+        // Makes the test-only protected endpoint (TestProtectedController) available.
+        builder.ConfigureTestServices(s => s.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly));
+    }
 
     public async Task InitializeAsync()
     {
