@@ -49,6 +49,7 @@ main.container { padding-top: 20px; padding-bottom: 48px; }
 .topbar .container { display: flex; align-items: baseline; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
 .brand { font-weight: 700; font-size: 1.25rem; color: var(--text); text-decoration: none; }
 .tagline { color: var(--muted); font-size: 0.9rem; }
+.topbar-logout { margin-left: auto; align-self: center; }
 
 .muted { color: var(--muted); }
 .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }

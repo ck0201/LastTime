@@ -1,7 +1,10 @@
-﻿<header class="topbar">
+<header class="topbar">
   <div class="container">
     <a routerLink="/" class="brand">Last Time</a>
     <span class="tagline">When did I last…?</span>
+    @if (auth.isAuthenticated()) {
+      <button type="button" class="btn topbar-logout" (click)="auth.logout()">Sign out</button>
+    }
   </div>
 </header>
 <main class="container">
