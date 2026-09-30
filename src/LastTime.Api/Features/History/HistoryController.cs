@@ -1,11 +1,14 @@
 ﻿using LastTime.Api.Data;
 using LastTime.Api.Domain;
+using LastTime.Api.Features.Auth;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace LastTime.Api.Features.History;
 
 [ApiController]
+[Authorize]
 [Route("api/items/{itemId:guid}/history")]
 public class HistoryController(LastTimeDbContext db) : ControllerBase
 {
@@ -13,7 +16,7 @@ public class HistoryController(LastTimeDbContext db) : ControllerBase
     [HttpGet("last")]
     public async Task<ActionResult<HistoryEntryResponse>> Last(Guid itemId, [FromQuery] string? action, CancellationToken ct)
     {
-        if (!await db.Items.AnyAsync(i => i.Id == itemId, ct)) return NotFound();
+        if (!await OwnsItemAsync(itemId, ct)) return NotFound();
 
         var query = db.HistoryEntries.AsNoTracking().Where(e => e.ItemId == itemId);
         if (!string.IsNullOrWhiteSpace(action))
@@ -29,7 +32,7 @@ public class HistoryController(LastTimeDbContext db) : ControllerBase
     [HttpPost]
     public async Task<ActionResult<HistoryEntryResponse>> Create(Guid itemId, HistoryEntryRequest request, CancellationToken ct)
     {
-        if (!await db.Items.AnyAsync(i => i.Id == itemId, ct)) return NotFound();
+        if (!await OwnsItemAsync(itemId, ct)) return NotFound();
 
         var entry = new HistoryEntry { ItemId = itemId };
         Apply(entry, request);
@@ -43,7 +46,9 @@ public class HistoryController(LastTimeDbContext db) : ControllerBase
     public async Task<ActionResult<HistoryEntryResponse>> Update(
         Guid itemId, Guid entryId, HistoryEntryRequest request, CancellationToken ct)
     {
-        var entry = await db.HistoryEntries.FirstOrDefaultAsync(e => e.Id == entryId && e.ItemId == itemId, ct);
+        var userId = User.GetUserId();
+        var entry = await db.HistoryEntries.FirstOrDefaultAsync(
+            e => e.Id == entryId && e.ItemId == itemId && e.Item.UserId == userId, ct);
         if (entry is null) return NotFound();
 
         Apply(entry, request);
@@ -55,8 +60,18 @@ public class HistoryController(LastTimeDbContext db) : ControllerBase
     [HttpDelete("{entryId:guid}")]
     public async Task<IActionResult> Delete(Guid itemId, Guid entryId, CancellationToken ct)
     {
-        var deleted = await db.HistoryEntries.Where(e => e.Id == entryId && e.ItemId == itemId).ExecuteDeleteAsync(ct);
+        var userId = User.GetUserId();
+        var deleted = await db.HistoryEntries
+            .Where(e => e.Id == entryId && e.ItemId == itemId && e.Item.UserId == userId)
+            .ExecuteDeleteAsync(ct);
         return deleted == 0 ? NotFound() : NoContent();
+    }
+
+    /// <summary>History is reached only through its parent item, so ownership is the item's owner (no UserId on entries).</summary>
+    private Task<bool> OwnsItemAsync(Guid itemId, CancellationToken ct)
+    {
+        var userId = User.GetUserId();
+        return db.Items.AnyAsync(i => i.Id == itemId && i.UserId == userId, ct);
     }
 
     private static void Apply(HistoryEntry entry, HistoryEntryRequest r)
