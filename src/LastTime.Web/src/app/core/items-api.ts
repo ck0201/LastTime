@@ -1,12 +1,13 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, of, throwError } from 'rxjs';
+import { environment } from '../../environments/environment';
 import { HistoryEntry, HistoryEntryRequest, Item, ItemDetail, ItemRequest, ItemSummary } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ItemsApi {
   private readonly http = inject(HttpClient);
-  private readonly base = '/api/items';
+  private readonly base = `${environment.apiBaseUrl}/api/items`;
 
   list(search = ''): Observable<ItemSummary[]> {
     const term = search.trim();
