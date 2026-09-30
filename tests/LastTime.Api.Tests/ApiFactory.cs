@@ -1,4 +1,7 @@
 ﻿using LastTime.Api.Data;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using LastTime.Api.Features.Auth;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -36,6 +39,21 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         using var scope = Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<LastTimeDbContext>().Database.MigrateAsync();
+    }
+
+    /// <summary>Registers a user through the real API, logs in, and returns a client sending that user's JWT.</summary>
+    public async Task<(HttpClient Client, Guid UserId)> CreateAuthenticatedClientAsync(string email)
+    {
+        var client = CreateClient();
+        var register = await client.PostAsJsonAsync("/api/auth/register", new { email, password = "Password123!" });
+        register.EnsureSuccessStatusCode();
+        var user = (await register.Content.ReadFromJsonAsync<RegisterResponse>())!;
+
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = "Password123!" });
+        login.EnsureSuccessStatusCode();
+        var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.Token;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return (client, user.Id);
     }
 
     public async Task ResetAsync()

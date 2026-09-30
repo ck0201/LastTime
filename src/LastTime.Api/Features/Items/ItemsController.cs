@@ -1,19 +1,23 @@
 ﻿using LastTime.Api.Data;
 using LastTime.Api.Domain;
+using LastTime.Api.Features.Auth;
 using LastTime.Api.Features.History;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace LastTime.Api.Features.Items;
 
 [ApiController]
+[Authorize]
 [Route("api/items")]
 public class ItemsController(LastTimeDbContext db) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<ItemSummaryResponse>>> Search([FromQuery] string? search, CancellationToken ct)
     {
-        var query = db.Items.AsNoTracking();
+        var userId = User.GetUserId();
+        var query = db.Items.AsNoTracking().Where(i => i.UserId == userId);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -46,7 +50,8 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ItemDetailResponse>> GetById(Guid id, CancellationToken ct)
     {
-        var item = await db.Items.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
+        var userId = User.GetUserId();
+        var item = await db.Items.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
         if (item is null) return NotFound();
 
         var history = await db.HistoryEntries.AsNoTracking()
@@ -63,6 +68,7 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     {
         var item = new Item
         {
+            UserId = User.GetUserId(),
             Name = request.Name.Trim(),
             Description = NullIfBlank(request.Description),
         };
@@ -75,7 +81,8 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<ItemResponse>> Update(Guid id, ItemRequest request, CancellationToken ct)
     {
-        var item = await db.Items.FirstOrDefaultAsync(i => i.Id == id, ct);
+        var userId = User.GetUserId();
+        var item = await db.Items.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
         if (item is null) return NotFound();
 
         item.Name = request.Name.Trim();
@@ -88,7 +95,8 @@ public class ItemsController(LastTimeDbContext db) : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
-        var deleted = await db.Items.Where(i => i.Id == id).ExecuteDeleteAsync(ct);
+        var userId = User.GetUserId();
+        var deleted = await db.Items.Where(i => i.Id == id && i.UserId == userId).ExecuteDeleteAsync(ct);
         return deleted == 0 ? NotFound() : NoContent();
     }
 

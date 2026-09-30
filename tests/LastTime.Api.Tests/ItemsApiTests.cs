@@ -7,9 +7,13 @@ namespace LastTime.Api.Tests;
 [Collection(ApiCollection.Name)]
 public class ItemsApiTests(ApiFactory factory) : IAsyncLifetime
 {
-    private readonly HttpClient _client = factory.CreateClient();
+    private HttpClient _client = null!;
 
-    public Task InitializeAsync() => factory.ResetAsync();
+    public async Task InitializeAsync()
+    {
+        await factory.ResetAsync();
+        (_client, _) = await factory.CreateAuthenticatedClientAsync("owner@example.com");
+    }
     public Task DisposeAsync() => Task.CompletedTask;
 
     private async Task<ItemResponse> CreateAsync(string name, string? description = null)
