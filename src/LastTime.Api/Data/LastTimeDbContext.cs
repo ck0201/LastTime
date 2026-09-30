@@ -5,11 +5,22 @@ namespace LastTime.Api.Data;
 
 public class LastTimeDbContext(DbContextOptions<LastTimeDbContext> options) : DbContext(options)
 {
+    public DbSet<User> Users => Set<User>();
     public DbSet<Item> Items => Set<Item>();
     public DbSet<HistoryEntry> HistoryEntries => Set<HistoryEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<User>(e =>
+        {
+            e.ToTable("users");
+            e.Property(x => x.Email).HasMaxLength(320).IsRequired();
+            e.Property(x => x.PasswordHash).IsRequired();
+            e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+            e.HasIndex(x => x.Email).IsUnique();
+        });
+
         modelBuilder.Entity<Item>(e =>
         {
             e.ToTable("items");
@@ -17,6 +28,9 @@ public class LastTimeDbContext(DbContextOptions<LastTimeDbContext> options) : Db
             e.Property(x => x.Description).HasMaxLength(2000);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
             e.HasIndex(x => x.Name);
+            e.HasOne(x => x.User).WithMany(u => u.Items)
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<HistoryEntry>(e =>

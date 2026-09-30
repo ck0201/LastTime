@@ -28,7 +28,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LastTimeDbContext>();
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE items, history_entries RESTART IDENTITY CASCADE");
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE users, items, history_entries RESTART IDENTITY CASCADE");
     }
 
     Task IAsyncLifetime.DisposeAsync() => Task.CompletedTask;
