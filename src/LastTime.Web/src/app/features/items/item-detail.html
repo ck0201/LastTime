@@ -45,8 +45,12 @@
       </form>
 
       <div class="chips">
-        @for (a of actionShortcuts(); track a) {
+        @let view = shortcutView();
+        @for (a of view.shown; track a) {
           <button type="button" class="chip" (click)="runLookup(a)">{{ a }}</button>
+        }
+        @if (view.more) {
+          <span class="chip-more" aria-hidden="true">...</span>
         }
       </div>
 

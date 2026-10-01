@@ -128,6 +128,7 @@ main.container { padding-top: 20px; padding-bottom: 48px; }
 .lookup-form .search { margin-bottom: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .chip { padding: 3px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.chip-more { padding: 3px 4px; color: var(--muted); font-size: 0.85rem; }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
 .answer { margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--bg); border-radius: 0 8px 8px 0; }
 .answer-when { font-size: 1.05rem; }

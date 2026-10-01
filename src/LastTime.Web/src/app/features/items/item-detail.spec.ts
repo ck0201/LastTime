@@ -103,6 +103,83 @@ describe('ItemDetailPage', () => {
       expect(root.querySelector('.lookup')!.textContent).toContain('Nothing on record matching “painted”');
     });
 
+    describe('shortcut suggestions', () => {
+      const actions = ['Service', 'service', 'Repair', 'AC Service', 'Bike Service', 'Cleaning', 'Maintenance', 'Inspection', 'SERVICE'];
+
+      async function renderActions(list: string[]) {
+        return render({
+          ...detail,
+          history: list.map((action, i) => ({ ...detail.history[0], id: `h${i}`, action })),
+        });
+      }
+
+      async function type(root: HTMLElement, text: string) {
+        const input = root.querySelector<HTMLInputElement>('.lookup input')!;
+        input.value = text;
+        input.dispatchEvent(new Event('input'));
+        await TestBed.inject(ApplicationRef).whenStable();
+      }
+
+      const chips = (root: HTMLElement) =>
+        Array.from(root.querySelectorAll('.chip')).map((c) => c.textContent?.trim());
+      const more = (root: HTMLElement) => root.querySelector('.chip-more');
+
+      it('deduplicates case-insensitively, keeping the first occurrence casing', async () => {
+        const root = await renderActions(['service', 'Service', 'SERVICE', 'Repair']);
+        expect(chips(root)).toEqual(['service', 'Repair']);
+      });
+
+      it('filters by the typed text (case-insensitive, contains), deduplicated', async () => {
+        const root = await renderActions(actions);
+        await type(root, 'SER');
+        expect(chips(root)).toEqual(['Service', 'AC Service', 'Bike Service']);
+        expect(more(root)).toBeNull();
+      });
+
+      it('shows at most 5 suggestions followed by "..." when more than 5 unique match', async () => {
+        const root = await renderActions(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
+        expect(chips(root)).toEqual(['a1', 'a2', 'a3', 'a4', 'a5']);
+        expect(more(root)?.textContent?.trim()).toBe('...');
+
+        await type(root, 'a');
+        expect(chips(root).length).toBe(5);
+        expect(more(root)).not.toBeNull();
+      });
+
+      it('does not show "..." for exactly 5 unique matches or fewer', async () => {
+        const root = await renderActions(['a1', 'a2', 'a3', 'a4', 'a5', 'A5']);
+        expect(chips(root)).toEqual(['a1', 'a2', 'a3', 'a4', 'a5']);
+        expect(more(root)).toBeNull();
+      });
+
+      it('"..." is not selectable: it is not a button and does nothing when clicked', async () => {
+        const root = await renderActions(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
+        const dots = more(root) as HTMLElement;
+
+        expect(dots.tagName).not.toBe('BUTTON');
+        expect(dots.classList.contains('chip')).toBe(false);
+        dots.click();
+        TestBed.inject(HttpTestingController).expectNone((r) => r.url.includes('/history/last'));
+      });
+
+      it('shows nothing (no chips, no "...") when nothing matches the typed text', async () => {
+        const root = await renderActions(actions);
+        await type(root, 'zzz');
+        expect(chips(root)).toEqual([]);
+        expect(more(root)).toBeNull();
+      });
+
+      it('still looks up using the typed text, regardless of the suggestions', async () => {
+        const root = await renderActions(actions);
+        await type(root, 'ser');
+        root.querySelector<HTMLFormElement>('.lookup form')!.dispatchEvent(new Event('submit'));
+
+        const req = TestBed.inject(HttpTestingController).expectOne((r) => r.url === '/api/items/i1/history/last');
+        expect(req.request.params.get('action')).toBe('ser');
+        req.flush(detail.history[0]);
+      });
+    });
+
     it('does not offer the lookup when the item has no history', async () => {
       const root = await render({ ...detail, history: [] });
       expect(root.querySelector('.lookup')).toBeNull();

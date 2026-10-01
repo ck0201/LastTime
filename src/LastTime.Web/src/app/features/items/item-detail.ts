@@ -14,6 +14,8 @@ type Lookup =
   | { status: 'error'; term: string };
 import { HistoryEntryForm } from '../history/history-entry-form';
 
+const MAX_SHORTCUTS = 5;
+
 @Component({
   selector: 'app-item-detail',
   imports: [RouterLink, DatePipe, CurrencyPipe, HistoryEntryForm],
@@ -56,6 +58,13 @@ export class ItemDetailPage implements OnInit {
       if (!seen.has(key)) seen.set(key, e.action);
     }
     return [...seen.values()];
+  });
+
+  /** The shortcuts narrowed to what is typed (case-insensitive "contains"), capped at 5; `more` adds a non-clickable "...". */
+  protected readonly shortcutView = computed(() => {
+    const typed = this.lookupTerm().trim().toLowerCase();
+    const matches = this.actionShortcuts().filter((a) => a.toLowerCase().includes(typed));
+    return { shown: matches.slice(0, MAX_SHORTCUTS), more: matches.length > MAX_SHORTCUTS };
   });
 
   ngOnInit(): void {
