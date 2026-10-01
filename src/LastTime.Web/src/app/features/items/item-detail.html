@@ -29,6 +29,39 @@
     <p class="notice notice-error">{{ actionError() }}</p>
   }
 
+  @if (insights(); as ins) {
+    <section class="insights">
+      <h2>Insights</h2>
+      <div class="insights-grid">
+        <div>
+          <div class="insight-label">Activity summary</div>
+          <ul class="insight-list">
+            @for (a of ins.actions; track a.action.toLowerCase()) {
+              <li><span>{{ a.action }}</span><strong>{{ a.count }}</strong></li>
+            }
+          </ul>
+        </div>
+        <div>
+          <div class="insight-label">Total spending</div>
+          @if (ins.total !== null) {
+            <div class="insight-value">{{ ins.total | currency: 'INR' : 'symbol' : costFormat(ins.total) }}</div>
+          } @else {
+            <div class="muted">No costs recorded</div>
+          }
+        </div>
+        <div>
+          <div class="insight-label">Last activity</div>
+          <div>
+            <strong>{{ ins.last.action }}</strong>
+          </div>
+          <div>
+            {{ ins.last.date | date: 'dd MMM yyyy' }}{{ ' ' }}<span class="muted">({{ relativeDate(ins.last.date) }})</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  }
+
   @if (it.history.length > 0) {
     <section class="lookup">
       <h2>When did I last…?</h2>

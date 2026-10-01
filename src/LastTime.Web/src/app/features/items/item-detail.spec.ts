@@ -52,6 +52,101 @@ describe('ItemDetailPage', () => {
     expect(text).toContain('Gas checked');
   });
 
+  describe('insights', () => {
+    type Row = { action: string; cost?: number | null; date?: string };
+
+    async function renderRows(rows: Row[]) {
+      return render({
+        ...detail,
+        history: rows.map((r, i) => ({
+          ...detail.history[0],
+          id: `h${i}`,
+          action: r.action,
+          cost: r.cost ?? null,
+          date: r.date ?? '2026-08-12',
+        })),
+      });
+    }
+
+    const summary = (root: HTMLElement) =>
+      Array.from(root.querySelectorAll('.insight-list li')).map((li) =>
+        Array.from(li.children).map((c) => c.textContent?.trim()),
+      );
+    const insightsText = (root: HTMLElement) => root.querySelector('.insights')!.textContent!.replace(/\s+/g, ' ');
+
+    it('groups actions case-insensitively, keeping the first-seen casing', async () => {
+      const root = await renderRows([{ action: 'service' }, { action: 'Service' }, { action: 'SERVICE' }, { action: 'Repair' }]);
+      expect(summary(root)).toEqual([['service', '3'], ['Repair', '1']]);
+    });
+
+    it('sorts by count descending', async () => {
+      const root = await renderRows([
+        { action: 'Repair' }, { action: 'Service' }, { action: 'service' }, { action: 'Cleaning' },
+        { action: 'Cleaning' }, { action: 'Cleaning' },
+      ]);
+      expect(summary(root)).toEqual([['Cleaning', '3'], ['Service', '2'], ['Repair', '1']]);
+    });
+
+    it('keeps first-seen order when counts tie', async () => {
+      const root = await renderRows([{ action: 'B' }, { action: 'A' }, { action: 'C' }, { action: 'a' }, { action: 'b' }]);
+      expect(summary(root)).toEqual([['B', '2'], ['A', '2'], ['C', '1']]);
+    });
+
+    it('ignores null costs and includes zero costs', async () => {
+      const root = await renderRows([
+        { action: 'a', cost: 100 }, { action: 'b', cost: null }, { action: 'c', cost: 0 }, { action: 'd', cost: 50.5 },
+      ]);
+      expect(insightsText(root)).toContain('₹150.50');
+    });
+
+    it('treats an entry costing 0 as a recorded cost', async () => {
+      const root = await renderRows([{ action: 'a', cost: 0 }, { action: 'b', cost: null }]);
+      expect(insightsText(root)).toContain('₹0');
+      expect(insightsText(root)).not.toContain('No costs recorded');
+    });
+
+    it('rounds the total to 2 decimals (no floating-point drift)', async () => {
+      const root = await renderRows([{ action: 'a', cost: 0.1 }, { action: 'b', cost: 0.2 }]);
+      expect(root.querySelector('.insight-value')!.textContent?.trim()).toBe('₹0.30');
+    });
+
+    it('formats whole-rupee totals without decimals', async () => {
+      const root = await renderRows([{ action: 'a', cost: 38999 }, { action: 'b', cost: 850 }]);
+      expect(root.querySelector('.insight-value')!.textContent?.trim()).toBe('₹39,849');
+    });
+
+    it('says "No costs recorded" when every cost is null', async () => {
+      const root = await renderRows([{ action: 'a' }, { action: 'b' }]);
+      expect(insightsText(root)).toContain('No costs recorded');
+      expect(root.querySelector('.insight-value')).toBeNull();
+    });
+
+    it('shows the first history entry as the last activity, with date and relative date', async () => {
+      const root = await renderRows([
+        { action: 'Newest', date: '2026-08-12' },
+        { action: 'Older', date: '2024-03-14' },
+      ]);
+      const last = root.querySelector('.insights-grid > div:nth-child(3)')!.textContent!;
+      expect(last).toContain('Last activity');
+      expect(last).toContain('Newest');
+      expect(last).toContain('12 Aug 2026');
+      expect(last).toMatch(/\(.+ago\)/);
+      expect(last).not.toContain('Older');
+    });
+
+    it('appears above the lookup section and the timeline', async () => {
+      const root = await renderRows([{ action: 'a' }]);
+      const insights = root.querySelector('.insights')!;
+      expect(insights.compareDocumentPosition(root.querySelector('.lookup')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(insights.compareDocumentPosition(root.querySelector('.timeline')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('is hidden when the item has no history', async () => {
+      const root = await render({ ...detail, history: [] });
+      expect(root.querySelector('.insights')).toBeNull();
+    });
+  });
+
   describe('"when did I last…?" lookup', () => {
     async function renderWithHttp() {
       const root = await render(detail);

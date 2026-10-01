@@ -60,6 +60,28 @@ export class ItemDetailPage implements OnInit {
     return [...seen.values()];
   });
 
+  /** Insights from the history already loaded; null when there is none. History is newest first, so [0] is the last activity. */
+  protected readonly insights = computed(() => {
+    const history = this.item()?.history ?? [];
+    if (history.length === 0) return null;
+
+    // Group case-insensitively, keeping the first-seen casing; Map keeps first-seen order, and the stable sort keeps it for ties.
+    const groups = new Map<string, { action: string; count: number }>();
+    for (const e of history) {
+      const key = e.action.toLowerCase();
+      const group = groups.get(key);
+      if (group) group.count++;
+      else groups.set(key, { action: e.action, count: 1 });
+    }
+    const actions = [...groups.values()].sort((a, b) => b.count - a.count);
+
+    // Null means "not recorded"; 0 is a real cost. Sum in paise so decimals don't drift.
+    const costs = history.filter((e) => e.cost !== null).map((e) => Math.round(e.cost! * 100));
+    const total = costs.length > 0 ? costs.reduce((sum, c) => sum + c, 0) / 100 : null;
+
+    return { actions, total, last: history[0] };
+  });
+
   /** The shortcuts narrowed to what is typed (case-insensitive "contains"), capped at 5; `more` adds a non-clickable "...". */
   protected readonly shortcutView = computed(() => {
     const typed = this.lookupTerm().trim().toLowerCase();
