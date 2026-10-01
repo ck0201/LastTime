@@ -17,6 +17,27 @@ export function relativeDate(dateIso: string, now: Date = new Date()): string {
   return `${Math.floor(days / 365.25)} years ago`;
 }
 
+/** Whole calendar days from one "YYYY-MM-DD" date to a later one (UTC math, so daylight saving cannot skew it). */
+export function daysBetween(fromIso: string, toIso: string): number {
+  const utcDay = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Date.UTC(y, m - 1, d) / 86_400_000;
+  };
+  return utcDay(toIso) - utcDay(fromIso);
+}
+
+/** A typical gap in days as short text: "daily", "every ~5 days", "every ~3 weeks", "every ~4 months", "every ~1 year". */
+export function gapLabel(days: number): string {
+  if (days < 1.5) return 'daily';
+  const plural = (n: number, unit: string) => `every ~${n} ${unit}${n === 1 ? '' : 's'}`;
+  if (days < 14) return plural(Math.round(days), 'day');
+  if (days < 45) return plural(Math.round(days / 7), 'week');
+  const months = Math.round(days / 30.44);
+  if (months === 12) return plural(1, 'year');
+  if (months < 24) return plural(months, 'month');
+  return plural(Math.round(days / 365.25), 'year');
+}
+
 /** Today's local calendar date as "YYYY-MM-DD" (what <input type="date"> and the API expect). */
 export function todayIso(): string {
   const d = new Date();

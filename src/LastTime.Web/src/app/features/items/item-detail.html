@@ -58,6 +58,16 @@
             {{ ins.last.date | date: 'dd MMM yyyy' }}{{ ' ' }}<span class="muted">({{ relativeDate(ins.last.date) }})</span>
           </div>
         </div>
+        @if (typicalGaps().length > 0) {
+          <div>
+            <div class="insight-label">Typical gap</div>
+            <ul class="gap-list">
+              @for (g of typicalGaps(); track g.action.toLowerCase()) {
+                <li><span>{{ g.action }}</span><span class="muted">{{ g.label }}</span></li>
+              }
+            </ul>
+          </div>
+        }
       </div>
     </section>
   }

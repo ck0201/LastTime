@@ -147,6 +147,96 @@ describe('ItemDetailPage', () => {
     });
   });
 
+  describe('typical gap', () => {
+    type Row = { action: string; date: string };
+
+    async function renderRows(rows: Row[]) {
+      return render({
+        ...detail,
+        history: rows.map((r, i) => ({ ...detail.history[0], id: `g${i}`, action: r.action, date: r.date })),
+      });
+    }
+
+    const on = (action: string, ...dates: string[]): Row[] => dates.map((date) => ({ action, date }));
+    const gaps = (root: HTMLElement) =>
+      Array.from(root.querySelectorAll('.gap-list li')).map((li) =>
+        Array.from(li.children).map((c) => c.textContent?.trim()),
+      );
+    const summary = (root: HTMLElement) => root.querySelectorAll('.insight-list li').length;
+
+    it('is not shown with fewer than 3 distinct dates', async () => {
+      const root = await renderRows(on('Service', '2025-01-01', '2025-05-01'));
+      expect(root.querySelector('.gap-list')).toBeNull();
+      expect(root.textContent).not.toContain('Typical gap');
+    });
+
+    it('is calculated for exactly 3 distinct dates', async () => {
+      const root = await renderRows(on('Service', '2025-01-01', '2025-05-01', '2025-09-01'));
+      expect(gaps(root)).toEqual([['Service', 'every ~4 months']]);
+    });
+
+    it('counts a date once when the same action is logged twice that day', async () => {
+      const twoDates = await renderRows(on('Service', '2025-01-01', '2025-01-01', '2025-05-01'));
+      expect(twoDates.querySelector('.gap-list')).toBeNull();
+
+      TestBed.resetTestingModule();
+      const threeDates = await renderRows(on('Service', '2025-01-01', '2025-01-01', '2025-05-01', '2025-09-01'));
+      expect(gaps(threeDates)).toEqual([['Service', 'every ~4 months']]);
+    });
+
+    it('groups actions case-insensitively and keeps the first-seen casing', async () => {
+      const root = await renderRows([
+        { action: 'Service', date: '2025-01-01' },
+        { action: 'service', date: '2025-05-01' },
+        { action: 'SERVICE', date: '2025-09-01' },
+      ]);
+      expect(gaps(root)).toEqual([['Service', 'every ~4 months']]);
+    });
+
+    it('ignores future-dated entries', async () => {
+      const onlyTwoPast = await renderRows(on('Service', '2025-01-01', '2025-05-01', '2999-01-01'));
+      expect(onlyTwoPast.querySelector('.gap-list')).toBeNull();
+
+      TestBed.resetTestingModule();
+      const threePast = await renderRows(on('Service', '2025-01-01', '2025-05-01', '2025-09-01', '2999-01-01'));
+      expect(gaps(threePast)).toEqual([['Service', 'every ~4 months']]);
+    });
+
+    it('uses the mean of the gaps when they are uneven', async () => {
+      // Gaps of 10, 10 and 100 days: mean 40 days (~6 weeks); the typical (median) gap would be much shorter.
+      const root = await renderRows(on('Oil change', '2025-01-01', '2025-01-11', '2025-01-21', '2025-05-01'));
+      expect(gaps(root)).toEqual([['Oil change', 'every ~6 weeks']]);
+    });
+
+    it('shows very short intervals as daily, never "~0 days"', async () => {
+      const root = await renderRows(on('Medicine', '2025-01-01', '2025-01-02', '2025-01-03'));
+      expect(gaps(root)).toEqual([['Medicine', 'daily']]);
+    });
+
+    it('caps at 3 actions, in the same order as the activity summary', async () => {
+      const d = ['2025-01-01', '2025-02-01', '2025-03-01'];
+      // Entry counts D=3, C=4, B=5, A=6 (extras repeat a date), logged D first.
+      const many = (action: string, n: number) => Array.from({ length: n }, (_, i) => ({ action, date: d[i % 3] }));
+      const root = await renderRows([...many('D', 3), ...many('C', 4), ...many('B', 5), ...many('A', 6)]);
+
+      expect(summary(root)).toBe(4);
+      expect(gaps(root).map((g) => g[0])).toEqual(['A', 'B', 'C']);
+    });
+
+    it('does not use forecast wording', async () => {
+      const root = await renderRows(on('Service', '2025-01-01', '2025-05-01', '2025-09-01'));
+      const text = root.querySelector('.gap-list')!.parentElement!.textContent!;
+      expect(text).not.toMatch(/next|due|expected|will/i);
+    });
+
+    it('leaves the existing insights unchanged', async () => {
+      const root = await renderRows(on('Service', '2025-01-01', '2025-05-01', '2025-09-01'));
+      const labels = Array.from(root.querySelectorAll('.insight-label')).map((l) => l.textContent?.trim());
+      expect(labels).toEqual(['Activity summary', 'Total spending', 'Last activity', 'Typical gap']);
+      expect(root.querySelector('.insight-list li')!.textContent).toContain('Service');
+    });
+  });
+
   describe('"when did I last…?" lookup', () => {
     async function renderWithHttp() {
       const root = await render(detail);

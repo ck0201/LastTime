@@ -2,7 +2,7 @@ import { CurrencyPipe, DatePipe } from '@angular/common';
 import { Component, computed, inject, input, OnInit, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
-import { costFormat, relativeDate } from '../../core/format';
+import { costFormat, daysBetween, gapLabel, relativeDate, todayIso } from '../../core/format';
 import { ItemsApi } from '../../core/items-api';
 import { HistoryEntry, HistoryEntryRequest, ItemDetail } from '../../core/models';
 
@@ -15,6 +15,8 @@ type Lookup =
 import { HistoryEntryForm } from '../history/history-entry-form';
 
 const MAX_SHORTCUTS = 5;
+const MIN_DATES_FOR_GAP = 3;
+const MAX_GAPS = 3;
 
 @Component({
   selector: 'app-item-detail',
@@ -80,6 +82,34 @@ export class ItemDetailPage implements OnInit {
     const total = costs.length > 0 ? costs.reduce((sum, c) => sum + c, 0) / 100 : null;
 
     return { actions, total, last: history[0] };
+  });
+
+  /**
+   * "Typical gap": the mean gap between the distinct past dates of an action, for actions with at least 3 such dates.
+   * Same grouping and order as the activity summary; at most 3 shown. Descriptive only, not a forecast.
+   */
+  protected readonly typicalGaps = computed(() => {
+    const ins = this.insights();
+    if (!ins) return [];
+
+    const today = todayIso();
+    const datesByAction = new Map<string, Set<string>>();
+    for (const e of this.item()!.history) {
+      if (e.date > today) continue; // "YYYY-MM-DD" strings compare chronologically
+      const key = e.action.toLowerCase();
+      if (!datesByAction.has(key)) datesByAction.set(key, new Set());
+      datesByAction.get(key)!.add(e.date);
+    }
+
+    const gaps: { action: string; label: string }[] = [];
+    for (const { action } of ins.actions) {
+      const dates = [...(datesByAction.get(action.toLowerCase()) ?? [])].sort();
+      if (dates.length < MIN_DATES_FOR_GAP) continue;
+      const meanDays = daysBetween(dates[0], dates[dates.length - 1]) / (dates.length - 1);
+      gaps.push({ action, label: gapLabel(meanDays) });
+      if (gaps.length === MAX_GAPS) break;
+    }
+    return gaps;
   });
 
   /** The shortcuts narrowed to what is typed (case-insensitive "contains"), capped at 5; `more` adds a non-clickable "...". */
