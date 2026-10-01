@@ -2,6 +2,7 @@ import { CurrencyPipe, DatePipe } from '@angular/common';
 import { Component, computed, inject, input, OnInit, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
+import { actionKey, actionLabel } from '../../core/action-key';
 import { costFormat, daysBetween, gapLabel, relativeDate, todayIso } from '../../core/format';
 import { ItemsApi } from '../../core/items-api';
 import { HistoryEntry, HistoryEntryRequest, ItemDetail } from '../../core/models';
@@ -13,6 +14,12 @@ type Lookup =
   | { status: 'none'; term: string }
   | { status: 'error'; term: string };
 import { HistoryEntryForm } from '../history/history-entry-form';
+
+/** A "When did I last…?" chip: the label shown, and the actionKey its entries are matched by. */
+interface Shortcut {
+  label: string;
+  key: string;
+}
 
 const MAX_SHORTCUTS = 5;
 const MIN_DATES_FOR_GAP = 3;
@@ -52,12 +59,12 @@ export class ItemDetailPage implements OnInit {
   protected readonly lookupTerm = signal('');
   protected readonly lookup = signal<Lookup>({ status: 'idle' });
 
-  /** Distinct actions already used on this item (case-insensitive), most recent first — offered as shortcuts. */
-  protected readonly actionShortcuts = computed(() => {
-    const seen = new Map<string, string>();
+  /** Distinct activities already used on this item (grouped like the insights), most recent first — offered as shortcuts. */
+  protected readonly actionShortcuts = computed<Shortcut[]>(() => {
+    const seen = new Map<string, Shortcut>();
     for (const e of this.item()?.history ?? []) {
-      const key = e.action.toLowerCase();
-      if (!seen.has(key)) seen.set(key, e.action);
+      const key = actionKey(e.action);
+      if (!seen.has(key)) seen.set(key, { label: actionLabel(e.action), key });
     }
     return [...seen.values()];
   });
@@ -67,13 +74,13 @@ export class ItemDetailPage implements OnInit {
     const history = this.item()?.history ?? [];
     if (history.length === 0) return null;
 
-    // Group case-insensitively, keeping the first-seen casing; Map keeps first-seen order, and the stable sort keeps it for ties.
+    // Group by actionKey and label with actionLabel; Map keeps first-seen order, and the stable sort keeps it for ties.
     const groups = new Map<string, { action: string; count: number }>();
     for (const e of history) {
-      const key = e.action.toLowerCase();
+      const key = actionKey(e.action);
       const group = groups.get(key);
       if (group) group.count++;
-      else groups.set(key, { action: e.action, count: 1 });
+      else groups.set(key, { action: actionLabel(e.action), count: 1 });
     }
     const actions = [...groups.values()].sort((a, b) => b.count - a.count);
 
@@ -96,14 +103,14 @@ export class ItemDetailPage implements OnInit {
     const datesByAction = new Map<string, Set<string>>();
     for (const e of this.item()!.history) {
       if (e.date > today) continue; // "YYYY-MM-DD" strings compare chronologically
-      const key = e.action.toLowerCase();
+      const key = actionKey(e.action);
       if (!datesByAction.has(key)) datesByAction.set(key, new Set());
       datesByAction.get(key)!.add(e.date);
     }
 
     const gaps: { action: string; label: string }[] = [];
     for (const { action } of ins.actions) {
-      const dates = [...(datesByAction.get(action.toLowerCase()) ?? [])].sort();
+      const dates = [...(datesByAction.get(actionKey(action)) ?? [])].sort();
       if (dates.length < MIN_DATES_FOR_GAP) continue;
       const meanDays = daysBetween(dates[0], dates[dates.length - 1]) / (dates.length - 1);
       gaps.push({ action, label: gapLabel(meanDays) });
@@ -115,7 +122,7 @@ export class ItemDetailPage implements OnInit {
   /** The shortcuts narrowed to what is typed (case-insensitive "contains"), capped at 5; `more` adds a non-clickable "...". */
   protected readonly shortcutView = computed(() => {
     const typed = this.lookupTerm().trim().toLowerCase();
-    const matches = this.actionShortcuts().filter((a) => a.toLowerCase().includes(typed));
+    const matches = this.actionShortcuts().filter((a) => a.label.toLowerCase().includes(typed));
     return { shown: matches.slice(0, MAX_SHORTCUTS), more: matches.length > MAX_SHORTCUTS };
   });
 
@@ -142,6 +149,17 @@ export class ItemDetailPage implements OnInit {
       next: (entry) => this.lookup.set(entry ? { status: 'found', term, entry } : { status: 'none', term }),
       error: () => this.lookup.set({ status: 'error', term }),
     });
+  }
+
+  /**
+   * A shortcut is an exact normalized activity, and the page already holds the whole history (newest first),
+   * so it is answered locally: the first entry with the same actionKey. Typed lookups still go to the API.
+   */
+  protected runShortcut(shortcut: Shortcut): void {
+    const term = shortcut.label;
+    const entry = this.item()?.history.find((e) => actionKey(e.action) === shortcut.key);
+    this.lookupTerm.set(term);
+    this.lookup.set(entry ? { status: 'found', term, entry } : { status: 'none', term });
   }
 
   private load(): void {

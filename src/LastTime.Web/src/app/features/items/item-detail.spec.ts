@@ -74,9 +74,9 @@ describe('ItemDetailPage', () => {
       );
     const insightsText = (root: HTMLElement) => root.querySelector('.insights')!.textContent!.replace(/\s+/g, ' ');
 
-    it('groups actions case-insensitively, keeping the first-seen casing', async () => {
+    it('groups actions case-insensitively (a known word shows as its base word)', async () => {
       const root = await renderRows([{ action: 'service' }, { action: 'Service' }, { action: 'SERVICE' }, { action: 'Repair' }]);
-      expect(summary(root)).toEqual([['service', '3'], ['Repair', '1']]);
+      expect(summary(root)).toEqual([['Service', '3'], ['Repair', '1']]);
     });
 
     it('sorts by count descending', async () => {
@@ -237,6 +237,243 @@ describe('ItemDetailPage', () => {
     });
   });
 
+  describe('activity variations', () => {
+    type Row = { action: string; date: string };
+
+    // Newest first, as the API returns it.
+    const serviceVariants: Row[] = [
+      { action: 'Servicing', date: '2025-09-01' },
+      { action: 'Service', date: '2025-05-01' },
+      { action: 'Serviced', date: '2025-01-01' },
+    ];
+    const repairVariants: Row[] = [
+      { action: 'Repairing', date: '2025-09-01' },
+      { action: 'Repairs', date: '2025-05-01' },
+      { action: 'Repaired', date: '2025-01-01' },
+      { action: 'Repair', date: '2024-09-01' },
+    ];
+
+    async function renderRows(rows: Row[]) {
+      return render({
+        ...detail,
+        history: rows.map((r, i) => ({ ...detail.history[0], id: `v${i}`, ...r })),
+      });
+    }
+
+    const pairs = (root: HTMLElement, selector: string) =>
+      Array.from(root.querySelectorAll(selector)).map((li) =>
+        Array.from(li.children).map((c) => c.textContent?.trim()),
+      );
+    const texts = (root: HTMLElement, selector: string) =>
+      Array.from(root.querySelectorAll(selector)).map((e) => e.textContent?.trim());
+
+    it('Activity Summary shows one row labeled "Service" for Service, Servicing and Serviced', async () => {
+      const root = await renderRows(serviceVariants);
+      expect(pairs(root, '.insight-list li')).toEqual([['Service', '3']]);
+    });
+
+    it('Typical Gap shows one row labeled "Service"', async () => {
+      const root = await renderRows(serviceVariants);
+      expect(pairs(root, '.gap-list li')).toEqual([['Service', 'every ~4 months']]);
+    });
+
+    it('the label is "Service" whichever variant is newest or first-seen', async () => {
+      const orders = [
+        serviceVariants, // newest is "Servicing"
+        [...serviceVariants].reverse(), // newest is "Serviced"
+        [serviceVariants[1], serviceVariants[0], serviceVariants[2]], // newest is "Service"
+      ];
+      for (const rows of orders) {
+        TestBed.resetTestingModule();
+        const root = await renderRows(rows);
+        expect(pairs(root, '.insight-list li')).toEqual([['Service', '3']]);
+        expect(pairs(root, '.gap-list li').map((r) => r[0])).toEqual(['Service']);
+        expect(texts(root, '.chip')).toEqual(['Service']);
+      }
+    });
+
+    it('Repair variants produce one row labeled "Repair" in the summary and Typical Gap', async () => {
+      const root = await renderRows(repairVariants);
+      expect(pairs(root, '.insight-list li')).toEqual([['Repair', '4']]);
+      expect(pairs(root, '.gap-list li').map((r) => r[0])).toEqual(['Repair']);
+    });
+
+    it('labels phrases with the base word and keeps different phrases apart', async () => {
+      const root = await renderRows([
+        { action: 'Bike servicing', date: '2025-09-01' },
+        { action: 'Bike service', date: '2025-05-01' },
+        { action: 'AC service', date: '2025-03-01' },
+        { action: 'Bike serviced', date: '2025-01-01' },
+      ]);
+      expect(pairs(root, '.insight-list li')).toEqual([['Bike service', '3'], ['AC service', '1']]);
+    });
+
+    it('offers one shortcut per normalized activity', async () => {
+      const root = await renderRows([...serviceVariants, ...repairVariants]);
+      expect(texts(root, '.chip')).toEqual(['Service', 'Repair']);
+    });
+
+    it('keeps the original action text in the history timeline', async () => {
+      const root = await renderRows(serviceVariants);
+      expect(texts(root, '.entry-action')).toEqual(['Servicing', 'Service', 'Serviced']);
+    });
+
+    it('still looks up exactly what was typed', async () => {
+      const root = await renderRows(serviceVariants);
+      const input = root.querySelector<HTMLInputElement>('.lookup input')!;
+      input.value = 'servicing';
+      input.dispatchEvent(new Event('input'));
+      await TestBed.inject(ApplicationRef).whenStable();
+      root.querySelector<HTMLFormElement>('.lookup form')!.dispatchEvent(new Event('submit'));
+
+      const req = TestBed.inject(HttpTestingController).expectOne((r) => r.url === '/api/items/i1/history/last');
+      expect(req.request.params.get('action')).toBe('servicing');
+      req.flush(detail.history[0]);
+    });
+  });
+
+  describe('shortcut chips answer locally by normalized activity', () => {
+    type Row = { action: string; date: string };
+
+    async function renderRows(rows: Row[]) {
+      return render({
+        ...detail,
+        history: rows.map((r, i) => ({ ...detail.history[0], id: `s${i}`, ...r })),
+      });
+    }
+
+    const chip = (root: HTMLElement, label: string) =>
+      Array.from(root.querySelectorAll<HTMLButtonElement>('.chip')).find((c) => c.textContent?.trim() === label)!;
+    const answer = (root: HTMLElement) => root.querySelector('.answer')?.textContent?.replace(/\s+/g, ' ') ?? '';
+    const noLookupRequest = () =>
+      TestBed.inject(HttpTestingController).expectNone((r) => r.url.includes('/history/last'));
+
+    async function click(root: HTMLElement, label: string) {
+      chip(root, label).click();
+      await TestBed.inject(ApplicationRef).whenStable();
+    }
+
+    async function typeAndSubmit(root: HTMLElement, text: string) {
+      const input = root.querySelector<HTMLInputElement>('.lookup input')!;
+      input.value = text;
+      input.dispatchEvent(new Event('input'));
+      await TestBed.inject(ApplicationRef).whenStable();
+      root.querySelector<HTMLFormElement>('.lookup form')!.dispatchEvent(new Event('submit'));
+    }
+
+    it('Service chip finds the newest entry when history has Service and Servicing', async () => {
+      const root = await renderRows([
+        { action: 'Servicing', date: '2025-09-01' },
+        { action: 'Service', date: '2025-01-01' },
+      ]);
+
+      await click(root, 'Service');
+
+      expect(answer(root)).toContain('01 Sep 2025');
+      expect(answer(root)).toContain('Servicing'); // the entry's own text is shown
+      expect(answer(root)).toContain('Last “Service”');
+    });
+
+    it('Service chip matches each of Service, Services, Servicing and Serviced', async () => {
+      for (const action of ['Service', 'Services', 'Servicing', 'Serviced']) {
+        TestBed.resetTestingModule();
+        const root = await renderRows([{ action, date: '2025-09-01' }]);
+        await click(root, 'Service');
+        expect(answer(root)).toContain(action);
+        expect(answer(root)).toContain('01 Sep 2025');
+      }
+    });
+
+    it('returns the latest normalized match, not an older one', async () => {
+      const root = await renderRows([
+        { action: 'Serviced', date: '2025-09-01' },
+        { action: 'Servicing', date: '2025-05-01' },
+        { action: 'Service', date: '2025-01-01' },
+      ]);
+
+      await click(root, 'Service');
+
+      expect(answer(root)).toContain('01 Sep 2025');
+      expect(answer(root)).not.toContain('01 May 2025');
+    });
+
+    it('Service chip does not match Bike service or AC service', async () => {
+      const root = await renderRows([
+        { action: 'Bike service', date: '2025-09-01' },
+        { action: 'AC service', date: '2025-08-01' },
+        { action: 'Servicing', date: '2025-01-01' },
+      ]);
+
+      await click(root, 'Service');
+
+      expect(answer(root)).toContain('01 Jan 2025');
+      expect(answer(root)).not.toContain('Bike service');
+      expect(answer(root)).not.toContain('AC service');
+    });
+
+    it('the Bike service chip answers only for Bike service', async () => {
+      const root = await renderRows([
+        { action: 'Service', date: '2025-09-01' },
+        { action: 'Bike servicing', date: '2025-02-01' },
+      ]);
+
+      await click(root, 'Bike service');
+
+      expect(answer(root)).toContain('01 Feb 2025');
+    });
+
+    it('Repair chip matches Repair, Repairs, Repairing and Repaired', async () => {
+      for (const action of ['Repair', 'Repairs', 'Repairing', 'Repaired']) {
+        TestBed.resetTestingModule();
+        const root = await renderRows([{ action, date: '2025-09-01' }]);
+        await click(root, 'Repair');
+        expect(answer(root)).toContain(action);
+      }
+    });
+
+    it('a chip click does not call the lookup API', async () => {
+      const root = await renderRows([
+        { action: 'Servicing', date: '2025-09-01' },
+        { action: 'Service', date: '2025-01-01' },
+      ]);
+
+      await click(root, 'Service');
+
+      noLookupRequest();
+      expect(root.querySelector('.answer')).not.toBeNull();
+    });
+
+    it('typed "Service" still calls the API with Service', async () => {
+      const root = await renderRows([{ action: 'Servicing', date: '2025-09-01' }]);
+      await typeAndSubmit(root, 'Service');
+
+      const req = TestBed.inject(HttpTestingController).expectOne((r) => r.url === '/api/items/i1/history/last');
+      expect(req.request.params.get('action')).toBe('Service');
+      req.flush('none', { status: 404, statusText: 'Not Found' });
+    });
+
+    it('typed "Servicing" still calls the API with Servicing', async () => {
+      const root = await renderRows([{ action: 'Service', date: '2025-09-01' }]);
+      await typeAndSubmit(root, 'Servicing');
+
+      const req = TestBed.inject(HttpTestingController).expectOne((r) => r.url === '/api/items/i1/history/last');
+      expect(req.request.params.get('action')).toBe('Servicing');
+      req.flush(detail.history[0]);
+    });
+
+    it('leaves the history timeline showing the original text', async () => {
+      const root = await renderRows([
+        { action: 'Servicing', date: '2025-09-01' },
+        { action: 'Service', date: '2025-01-01' },
+      ]);
+      await click(root, 'Service');
+      expect(Array.from(root.querySelectorAll('.entry-action')).map((e) => e.textContent?.trim())).toEqual([
+        'Servicing',
+        'Service',
+      ]);
+    });
+  });
+
   describe('"when did I last…?" lookup', () => {
     async function renderWithHttp() {
       const root = await render(detail);
@@ -253,16 +490,14 @@ describe('ItemDetailPage', () => {
         ],
       });
       const chips = Array.from(root.querySelectorAll('.chip')).map((c) => c.textContent?.trim());
-      expect(chips).toEqual(['Serviced', 'Purchased']);
+      expect(chips).toEqual(['Service', 'Purchased']);
     });
 
     it('answers with the date, cost and provider when a shortcut is clicked', async () => {
       const { root, http } = await renderWithHttp();
 
       root.querySelector<HTMLButtonElement>('.chip')!.click();
-      const req = http.expectOne((r) => r.url === '/api/items/i1/history/last');
-      expect(req.request.params.get('action')).toBe('Serviced');
-      req.flush(detail.history[0]);
+      http.expectNone((r) => r.url.includes('/history/last')); // answered from the loaded history
       await TestBed.inject(ApplicationRef).whenStable();
 
       const answer = root.querySelector('.answer')!.textContent!.replace(/\s+/g, ' ');
@@ -309,15 +544,15 @@ describe('ItemDetailPage', () => {
         Array.from(root.querySelectorAll('.chip')).map((c) => c.textContent?.trim());
       const more = (root: HTMLElement) => root.querySelector('.chip-more');
 
-      it('deduplicates case-insensitively, keeping the first occurrence casing', async () => {
+      it('deduplicates case-insensitively, keeping the first occurrence casing (known words use the base word)', async () => {
         const root = await renderActions(['service', 'Service', 'SERVICE', 'Repair']);
-        expect(chips(root)).toEqual(['service', 'Repair']);
+        expect(chips(root)).toEqual(['Service', 'Repair']);
       });
 
       it('filters by the typed text (case-insensitive, contains), deduplicated', async () => {
         const root = await renderActions(actions);
         await type(root, 'SER');
-        expect(chips(root)).toEqual(['Service', 'AC Service', 'Bike Service']);
+        expect(chips(root)).toEqual(['Service', 'AC service', 'Bike service']);
         expect(more(root)).toBeNull();
       });
 

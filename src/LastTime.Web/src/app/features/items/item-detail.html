@@ -89,8 +89,8 @@
 
       <div class="chips">
         @let view = shortcutView();
-        @for (a of view.shown; track a) {
-          <button type="button" class="chip" (click)="runLookup(a)">{{ a }}</button>
+        @for (a of view.shown; track a.key) {
+          <button type="button" class="chip" (click)="runShortcut(a)">{{ a.label }}</button>
         }
         @if (view.more) {
           <span class="chip-more" aria-hidden="true">...</span>
