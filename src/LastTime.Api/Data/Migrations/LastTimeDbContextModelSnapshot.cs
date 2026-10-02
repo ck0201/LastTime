@@ -96,6 +96,45 @@ namespace LastTime.Api.Data.Migrations
                     b.ToTable("items", (string)null);
                 });
 
+            modelBuilder.Entity("LastTime.Api.Domain.OtpCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Purpose")
+                        .IsUnique();
+
+                    b.ToTable("otp_codes", (string)null);
+                });
+
             modelBuilder.Entity("LastTime.Api.Domain.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -111,6 +150,9 @@ namespace LastTime.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("character varying(320)");
+
+                    b.Property<DateTimeOffset?>("EmailVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -151,6 +193,17 @@ namespace LastTime.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("LastTime.Api.Domain.OtpCode", b =>
+                {
+                    b.HasOne("LastTime.Api.Domain.User", "User")
+                        .WithMany("OtpCodes")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("LastTime.Api.Domain.Item", b =>
                 {
                     b.Navigation("History");
@@ -159,6 +212,8 @@ namespace LastTime.Api.Data.Migrations
             modelBuilder.Entity("LastTime.Api.Domain.User", b =>
                 {
                     b.Navigation("Items");
+
+                    b.Navigation("OtpCodes");
                 });
 #pragma warning restore 612, 618
         }
