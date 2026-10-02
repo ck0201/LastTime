@@ -50,6 +50,8 @@ main.container { padding-top: 20px; padding-bottom: 48px; }
 .brand { font-weight: 700; font-size: 1.25rem; color: var(--text); text-decoration: none; }
 .tagline { color: var(--muted); font-size: 0.9rem; }
 .topbar-logout { margin-left: auto; align-self: center; }
+/* Item List only: keep the shared header visible while the list scrolls. */
+body:has(app-item-list) .topbar { position: sticky; top: 0; z-index: 10; }
 
 .muted { color: var(--muted); }
 .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
