@@ -69,6 +69,18 @@ export class ItemDetailPage implements OnInit {
     return [...seen.values()];
   });
 
+  /** The history grouped by month ("YYYY-MM"), in the order received (newest first), so the first group is the latest month. */
+  protected readonly monthGroups = computed(() => {
+    const groups = new Map<string, { key: string; date: string; entries: HistoryEntry[] }>();
+    for (const e of this.item()?.history ?? []) {
+      const key = e.date.slice(0, 7);
+      const group = groups.get(key);
+      if (group) group.entries.push(e);
+      else groups.set(key, { key, date: e.date, entries: [e] });
+    }
+    return [...groups.values()];
+  });
+
   /** Insights from the history already loaded; null when there is none. History is newest first, so [0] is the last activity. */
   protected readonly insights = computed(() => {
     const history = this.item()?.history ?? [];

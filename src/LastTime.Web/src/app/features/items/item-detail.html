@@ -153,45 +153,52 @@
       <p class="muted">Record the first thing that happened — a purchase, a repair, a service.</p>
     </div>
   } @else {
-    <ol class="timeline">
-      @for (e of it.history; track e.id) {
-        <li>
-          @if (editingId() === e.id) {
-            <app-history-entry-form
-              [entry]="e"
-              [saving]="saving()"
-              [error]="formError()"
-              (submitted)="saveEntry($event)"
-              (cancelled)="closeForms()"
-            />
-          } @else {
-            <div class="entry">
-              <div class="entry-main">
-                <span class="entry-action">{{ e.action }}</span>
-                @if (e.cost !== null) {
-                  <span class="entry-cost">{{ e.cost | currency: 'INR' : 'symbol' : costFormat(e.cost) }}</span>
-                }
-                <time class="entry-date">{{ e.date | date: 'dd MMM yyyy' }}</time>
-              </div>
-              @if (e.provider) {
-                <div class="entry-provider">{{ e.provider }}</div>
+    @for (g of monthGroups(); track g.key; let first = $first) {
+      <details class="month" [open]="first">
+        <summary>
+          <span>{{ g.date | date: 'MMMM yyyy' }} · {{ g.entries.length }} {{ g.entries.length === 1 ? 'activity' : 'activities' }}</span>
+        </summary>
+        <ol class="timeline">
+          @for (e of g.entries; track e.id) {
+            <li>
+              @if (editingId() === e.id) {
+                <app-history-entry-form
+                  [entry]="e"
+                  [saving]="saving()"
+                  [error]="formError()"
+                  (submitted)="saveEntry($event)"
+                  (cancelled)="closeForms()"
+                />
+              } @else {
+                <div class="entry">
+                  <div class="entry-main">
+                    <span class="entry-action">{{ e.action }}</span>
+                    @if (e.cost !== null) {
+                      <span class="entry-cost">{{ e.cost | currency: 'INR' : 'symbol' : costFormat(e.cost) }}</span>
+                    }
+                    <time class="entry-date">{{ e.date | date: 'dd MMM yyyy' }}</time>
+                  </div>
+                  @if (e.provider) {
+                    <div class="entry-provider">{{ e.provider }}</div>
+                  }
+                  @if (e.notes) {
+                    <div class="entry-notes">{{ e.notes }}</div>
+                  }
+                  <div class="entry-actions">
+                    <button type="button" class="link" (click)="startEdit(e.id)">Edit</button>
+                    @if (confirmDeleteEntryId() === e.id) {
+                      <button type="button" class="link link-danger" (click)="deleteEntry(e.id)">Confirm delete</button>
+                      <button type="button" class="link" (click)="confirmDeleteEntryId.set(null)">Cancel</button>
+                    } @else {
+                      <button type="button" class="link" (click)="confirmDeleteEntryId.set(e.id)">Delete</button>
+                    }
+                  </div>
+                </div>
               }
-              @if (e.notes) {
-                <div class="entry-notes">{{ e.notes }}</div>
-              }
-              <div class="entry-actions">
-                <button type="button" class="link" (click)="startEdit(e.id)">Edit</button>
-                @if (confirmDeleteEntryId() === e.id) {
-                  <button type="button" class="link link-danger" (click)="deleteEntry(e.id)">Confirm delete</button>
-                  <button type="button" class="link" (click)="confirmDeleteEntryId.set(null)">Cancel</button>
-                } @else {
-                  <button type="button" class="link" (click)="confirmDeleteEntryId.set(e.id)">Delete</button>
-                }
-              </div>
-            </div>
+            </li>
           }
-        </li>
-      }
-    </ol>
+        </ol>
+      </details>
+    }
   }
 }

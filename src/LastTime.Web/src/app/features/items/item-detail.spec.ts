@@ -237,6 +237,130 @@ describe('ItemDetailPage', () => {
     });
   });
 
+  describe('history timeline grouped by month', () => {
+    type Row = { action: string; date: string; cost?: number | null; provider?: string | null; notes?: string | null };
+
+    // Newest first, as the API returns it.
+    const rows: Row[] = [
+      { action: 'Serviced', date: '2026-09-20', cost: 850, provider: 'CoolCare', notes: 'Gas checked' },
+      { action: 'Cleaned', date: '2026-09-05' },
+      { action: 'Repaired', date: '2026-08-30', cost: 1200 },
+      { action: 'Purchased', date: '2025-09-10' },
+    ];
+
+    async function renderRows(list: Row[]) {
+      return render({
+        ...detail,
+        history: list.map((r, i) => ({
+          ...detail.history[0],
+          id: `m${i}`,
+          cost: null,
+          provider: null,
+          notes: null,
+          ...r,
+        })),
+      });
+    }
+
+    const months = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLDetailsElement>('details.month'));
+    const heading = (d: HTMLDetailsElement) => d.querySelector('summary')!.textContent!.replace(/\s+/g, ' ').trim();
+    const actionsIn = (d: HTMLElement) => Array.from(d.querySelectorAll('.entry-action')).map((e) => e.textContent?.trim());
+
+    it('groups by month and year, newest month first, with the activity count', async () => {
+      const root = await renderRows(rows);
+      expect(months(root).map(heading)).toEqual([
+        'September 2026 · 2 activities',
+        'August 2026 · 1 activity',
+        'September 2025 · 1 activity',
+      ]);
+    });
+
+    it('expands the latest month and collapses the older ones', async () => {
+      const root = await renderRows(rows);
+      expect(months(root).map((d) => d.open)).toEqual([true, false, false]);
+    });
+
+    it('keeps entries newest first within each month, and overall', async () => {
+      const root = await renderRows(rows);
+      expect(months(root).map(actionsIn)).toEqual([['Serviced', 'Cleaned'], ['Repaired'], ['Purchased']]);
+      expect(actionsIn(root)).toEqual(['Serviced', 'Cleaned', 'Repaired', 'Purchased']); // same order as the API gave
+    });
+
+    it('opens and closes a month when its heading is clicked', async () => {
+      const root = await renderRows(rows);
+      const older = months(root)[1];
+
+      older.querySelector('summary')!.click();
+      await TestBed.inject(ApplicationRef).whenStable();
+      expect(older.open).toBe(true);
+
+      older.querySelector('summary')!.click();
+      await TestBed.inject(ApplicationRef).whenStable();
+      expect(older.open).toBe(false);
+    });
+
+    it('shows every entry, with date, action, cost, provider, notes and Edit/Delete', async () => {
+      const root = await renderRows(rows);
+      expect(root.querySelectorAll('.entry').length).toBe(4);
+
+      const first = root.querySelector('.entry')!;
+      expect(first.querySelector('.entry-action')!.textContent).toContain('Serviced');
+      expect(first.querySelector('.entry-date')!.textContent).toContain('20 Sep 2026');
+      expect(first.querySelector('.entry-cost')!.textContent).toContain('₹850');
+      expect(first.querySelector('.entry-provider')!.textContent).toContain('CoolCare');
+      expect(first.querySelector('.entry-notes')!.textContent).toContain('Gas checked');
+      const buttons = Array.from(first.querySelectorAll('.entry-actions button')).map((b) => b.textContent?.trim());
+      expect(buttons).toEqual(['Edit', 'Delete']);
+    });
+
+    it('omits the cost when there is none', async () => {
+      const root = await renderRows(rows);
+      const second = root.querySelectorAll('.entry')[1];
+      expect(second.querySelector('.entry-cost')).toBeNull();
+    });
+
+    it('still opens the edit form for an entry in the expanded month', async () => {
+      const root = await renderRows(rows);
+      root.querySelector<HTMLButtonElement>('.entry-actions button')!.click();
+      await TestBed.inject(ApplicationRef).whenStable();
+      expect(root.querySelector('details.month app-history-entry-form')).not.toBeNull();
+    });
+
+    it('treats the same month of different years as separate groups', async () => {
+      const root = await renderRows([
+        { action: 'A', date: '2026-09-01' },
+        { action: 'B', date: '2025-09-01' },
+      ]);
+      expect(months(root).map(heading)).toEqual(['September 2026 · 1 activity', 'September 2025 · 1 activity']);
+    });
+
+    it('shows a single expanded group when all entries share a month', async () => {
+      const root = await renderRows([
+        { action: 'A', date: '2026-09-20' },
+        { action: 'B', date: '2026-09-01' },
+      ]);
+      expect(months(root).length).toBe(1);
+      expect(months(root)[0].open).toBe(true);
+      expect(heading(months(root)[0])).toBe('September 2026 · 2 activities');
+    });
+
+    it('shows no month sections for an empty history, only the existing empty state', async () => {
+      const root = await render({ ...detail, history: [] });
+      expect(root.querySelector('details.month')).toBeNull();
+      expect(root.querySelector('.empty')!.textContent).toContain('No history yet.');
+    });
+
+    it('leaves the Insights and "When did I last…?" sections in place above the timeline', async () => {
+      const root = await renderRows(rows);
+      const firstMonth = root.querySelector('details.month')!;
+      for (const selector of ['.insights', '.lookup']) {
+        const section = root.querySelector(selector)!;
+        expect(section).not.toBeNull();
+        expect(section.compareDocumentPosition(firstMonth) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    });
+  });
+
   describe('activity variations', () => {
     type Row = { action: string; date: string };
 

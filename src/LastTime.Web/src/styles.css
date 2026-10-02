@@ -107,6 +107,18 @@ body:has(app-item-list) .topbar { position: sticky; top: 0; z-index: 10; }
 .card-sub { color: var(--muted); }
 .card-meta { color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
 
+/* History grouped by month */
+.month { margin-bottom: 12px; }
+.month > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none;
+  padding: 10px 14px; font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.month > summary::-webkit-details-marker { display: none; }
+.month > summary::after { content: '▸'; color: var(--muted); }
+.month[open] > summary { margin-bottom: 12px; }
+.month[open] > summary::after { content: '▾'; }
+.month > summary:hover { border-color: var(--accent); }
+
 /* Timeline */
 .timeline { list-style: none; margin: 0; padding: 0 0 0 22px; border-left: 2px solid var(--border); }
 .timeline > li { position: relative; padding-bottom: 14px; }
@@ -115,10 +127,10 @@ body:has(app-item-list) .topbar { position: sticky; top: 0; z-index: 10; }
   background: var(--accent); border: 2px solid var(--bg);
 }
 .entry { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
-.entry-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.entry-action { font-weight: 600; font-size: 1.05rem; }
-.entry-cost { font-weight: 600; }
-.entry-date { margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+.entry-main { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px; }
+.entry-date { grid-row: 1; grid-column: 1; font-weight: 700; font-size: 0.95rem; color: var(--accent); }
+.entry-cost { grid-row: 1; grid-column: 2; font-weight: 700; font-size: 1.05rem; }
+.entry-action { grid-row: 2; grid-column: 1 / -1; font-weight: 600; font-size: 1.15rem; }
 .entry-provider { color: var(--muted); }
 .entry-notes { margin-top: 4px; white-space: pre-wrap; }
 .entry-actions { display: flex; gap: 12px; margin-top: 8px; }
