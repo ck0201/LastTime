@@ -30,6 +30,9 @@ public static class Otp
     // Same mechanism as passwords: salted PBKDF2 from the ASP.NET Core shared framework.
     private static readonly PasswordHasher<User> Hasher = new();
 
+    // A hash to check against when there is nothing real to check, so every rejection costs about the same.
+    private static readonly string DummyHash = Hasher.HashPassword(new User(), "000000");
+
     /// <summary>A random 6-digit code, "000000" to "999999".</summary>
     public static string GenerateCode() =>
         RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
@@ -85,16 +88,21 @@ public static class Otp
     /// True when <paramref name="code"/> (or a <see cref="PasswordResetToken"/>) is the user's current, unexpired value for the purpose and fewer than
     /// <see cref="MaxFailedAttempts"/> wrong guesses were made. A correct code is consumed (deleted), and for
     /// <see cref="EmailVerification"/> it also sets <see cref="User.EmailVerifiedAt"/>.
+    /// <para>
+    /// <paramref name="whileConsuming"/> lets the caller change something in the same transaction as the delete (for
+    /// example the password). Both happen or neither does: if it returns false or throws, the code is not consumed.
+    /// </para>
     /// </summary>
     public static async Task<bool> VerifyAsync(
-        LastTimeDbContext db, TimeProvider time, User user, string purpose, string code, CancellationToken ct = default)
+        LastTimeDbContext db, TimeProvider time, User user, string purpose, string code, CancellationToken ct = default,
+        Func<CancellationToken, Task<bool>>? whileConsuming = null)
     {
         RequirePurpose(purpose);
         var now = time.GetUtcNow();
 
         var otp = await db.OtpCodes.AsNoTracking()
             .FirstOrDefaultAsync(o => o.UserId == user.Id && o.Purpose == purpose, ct);
-        if (otp is null) return false;
+        if (otp is null) return Reject(user, code);
 
         // Spend one attempt first. The expiry and attempt-limit checks are part of this same UPDATE, so even
         // simultaneous guesses cannot get more than MaxFailedAttempts tries. A correct code deletes the row below,
@@ -102,7 +110,7 @@ public static class Otp
         var spent = await db.OtpCodes
             .Where(o => o.Id == otp.Id && o.CodeHash == otp.CodeHash && o.ExpiresAt > now && o.FailedAttempts < MaxFailedAttempts)
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.FailedAttempts, o => o.FailedAttempts + 1), ct);
-        if (spent == 0) return false;
+        if (spent == 0) return Reject(user, code);
 
         if (Hasher.VerifyHashedPassword(user, otp.CodeHash, code.Trim()) == PasswordVerificationResult.Failed)
             return false;
@@ -114,6 +122,9 @@ public static class Otp
             .ExecuteDeleteAsync(ct);
         if (consumed != 1) return false; // already used; the transaction rolls back
 
+        // Only the one request that really consumed the code gets here, so this runs at most once per code.
+        if (whileConsuming is not null && !await whileConsuming(ct)) return false; // veto: roll back, code stays
+
         if (purpose == EmailVerification)
         {
             await db.Users.Where(u => u.Id == user.Id)
@@ -123,6 +134,13 @@ public static class Otp
 
         await tx.CommitAsync(ct);
         return true;
+    }
+
+    /// <summary>A rejection that had nothing to check still does one hash check, so it takes about as long as a wrong guess.</summary>
+    private static bool Reject(User user, string code)
+    {
+        _ = Hasher.VerifyHashedPassword(user, DummyHash, code.Trim());
+        return false;
     }
 
     private static void RequirePurpose(string purpose)

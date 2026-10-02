@@ -3,9 +3,16 @@ using LastTime.Api.Domain;
 
 namespace LastTime.Api.Features.Auth;
 
+/// <summary>The password rule, shared by registration and password reset so the two cannot drift apart.</summary>
+public static class PasswordRules
+{
+    public const int MinLength = 8;
+    public const int MaxLength = 128;
+}
+
 public record RegisterRequest(
     [Required, EmailAddress, StringLength(320)] string Email,
-    [Required, StringLength(128, MinimumLength = 8)] string Password);
+    [Required, StringLength(PasswordRules.MaxLength, MinimumLength = PasswordRules.MinLength)] string Password);
 
 public record RegisterResponse(Guid Id, string Email, DateTimeOffset CreatedAt)
 {
@@ -31,3 +38,8 @@ public record VerifyPasswordResetRequest(
 
 /// <summary>An opaque, short-lived value the password change will present. It says nothing about who it belongs to.</summary>
 public record PasswordResetTokenResponse(string ResetToken);
+
+public record ResetPasswordRequest(
+    [Required, EmailAddress, StringLength(320)] string Email,
+    [Required, StringLength(256)] string ResetToken,
+    [Required, StringLength(PasswordRules.MaxLength, MinimumLength = PasswordRules.MinLength)] string NewPassword);

@@ -411,4 +411,105 @@ public class OtpTests(ApiFactory factory) : IAsyncLifetime
         Assert.True(await VerifyAsync(user, survivor));
         Assert.False(await VerifyAsync(user, survivor)); // and it is single use
     }
+
+    // ---- whileConsuming: changes made in the same transaction as consuming the code
+
+    private async Task<string> HashOfAsync(User user) => (await NewDb().Users.AsNoTracking().SingleAsync(u => u.Id == user.Id)).PasswordHash;
+
+    [Fact]
+    public async Task WhileConsuming_RunsOnce_AndItsChangeIsCommittedWithTheConsumption()
+    {
+        var user = await NewUserAsync();
+        var code = await IssueAsync(user);
+        var calls = 0;
+
+        var db = NewDb();
+        var ok = await Otp.VerifyAsync(db, _time, user, Otp.EmailVerification, code, CancellationToken.None, async ct =>
+        {
+            calls++;
+            await db.Users.Where(u => u.Id == user.Id).ExecuteUpdateAsync(x => x.SetProperty(u => u.PasswordHash, "changed"), ct);
+            return true;
+        });
+
+        Assert.True(ok);
+        Assert.Equal(1, calls);
+        Assert.Equal("changed", await HashOfAsync(user));
+        Assert.Null(await RowAsync(user)); // consumed
+    }
+
+    [Fact]
+    public async Task WhileConsuming_ReturningFalse_RollsEverythingBack_AndKeepsTheCode()
+    {
+        var user = await NewUserAsync();
+        var code = await IssueAsync(user);
+        var before = await HashOfAsync(user);
+
+        var db = NewDb();
+        var ok = await Otp.VerifyAsync(db, _time, user, Otp.EmailVerification, code, CancellationToken.None, async ct =>
+        {
+            await db.Users.Where(u => u.Id == user.Id).ExecuteUpdateAsync(x => x.SetProperty(u => u.PasswordHash, "half-done"), ct);
+            return false; // veto
+        });
+
+        Assert.False(ok);
+        Assert.Equal(before, await HashOfAsync(user)); // the change was rolled back
+        Assert.NotNull(await RowAsync(user)); // the code was not consumed
+        Assert.Null((await NewDb().Users.AsNoTracking().SingleAsync(u => u.Id == user.Id)).EmailVerifiedAt); // and no side effects
+    }
+
+    [Fact]
+    public async Task WhileConsuming_Throwing_RollsEverythingBack_AndTheExceptionPropagates()
+    {
+        var user = await NewUserAsync();
+        var code = await IssueAsync(user);
+        var before = await HashOfAsync(user);
+
+        var db = NewDb();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Otp.VerifyAsync(db, _time, user, Otp.EmailVerification, code, CancellationToken.None, async ct =>
+            {
+                await db.Users.Where(u => u.Id == user.Id).ExecuteUpdateAsync(x => x.SetProperty(u => u.PasswordHash, "half-done"), ct);
+                throw new InvalidOperationException("boom");
+            }));
+
+        Assert.Equal(before, await HashOfAsync(user));
+        Assert.NotNull(await RowAsync(user));
+    }
+
+    [Fact]
+    public async Task WhileConsuming_IsNotCalled_ForWrongExpiredLockedOrMissingCodes()
+    {
+        var user = await NewUserAsync();
+        var calls = 0;
+        Task<bool> Hook(CancellationToken ct) { calls++; return Task.FromResult(true); }
+
+        Assert.False(await Otp.VerifyAsync(NewDb(), _time, user, Otp.EmailVerification, "123456", CancellationToken.None, Hook)); // none issued
+        var code = await IssueAsync(user);
+        Assert.False(await Otp.VerifyAsync(NewDb(), _time, user, Otp.EmailVerification, Wrong(code), CancellationToken.None, Hook));
+        _time.Now = _time.Now.AddMinutes(11);
+        Assert.False(await Otp.VerifyAsync(NewDb(), _time, user, Otp.EmailVerification, code, CancellationToken.None, Hook)); // expired
+        _time.Now = _time.Now.AddMinutes(-11);
+        for (var i = 0; i < Otp.MaxFailedAttempts; i++) await VerifyAsync(user, Wrong(code));
+        Assert.False(await Otp.VerifyAsync(NewDb(), _time, user, Otp.EmailVerification, code, CancellationToken.None, Hook)); // locked
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task WhileConsuming_RunsAtMostOnce_UnderSimultaneousCorrectAttempts()
+    {
+        var user = await NewUserAsync();
+        var code = await IssueAsync(user);
+        var calls = 0;
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+            Otp.VerifyAsync(NewDb(), _time, user, Otp.EmailVerification, code, CancellationToken.None, ct =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(true);
+            }))));
+
+        Assert.Equal(1, results.Count(r => r));
+        Assert.Equal(1, calls);
+    }
 }

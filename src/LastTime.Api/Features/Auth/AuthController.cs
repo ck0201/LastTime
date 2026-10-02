@@ -153,6 +153,36 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
         return new PasswordResetTokenResponse(token);
     }
 
+    /// <summary>
+    /// Sets a new password using the reset token from <c>verify-password-reset</c>. Only verified, active accounts can
+    /// do this. The token is single use, and consuming it and changing the password happen in one transaction.
+    /// </summary>
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request, CancellationToken ct)
+    {
+        var email = NormalizeEmail(request.Email);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
+
+        // Hash the new password for every request, accepted or not, so rejections do not run noticeably faster.
+        var newHash = Hasher.HashPassword(user ?? new User(), request.NewPassword);
+
+        if (user is not { IsActive: true, EmailVerifiedAt: not null })
+        {
+            // Unknown, deactivated or unverified: the same answer as a bad token, after the same kind of hashing work.
+            _ = Hasher.VerifyHashedPassword(new User(), DummyHash, request.ResetToken.Trim());
+            return InvalidResetToken();
+        }
+
+        // The password is changed inside the transaction that consumes the token. If the account was deactivated or
+        // changed in the meantime (no row updated), the token is not consumed. Only EmailVerifiedAt is left alone.
+        var reset = await Otp.VerifyAsync(db, time, user, Otp.PasswordResetToken, request.ResetToken, ct,
+            async token => await db.Users
+                .Where(u => u.Id == user.Id && u.IsActive && u.EmailVerifiedAt != null)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.PasswordHash, newHash), token) == 1);
+
+        return reset ? NoContent() : InvalidResetToken();
+    }
+
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
     /// <summary>
@@ -183,6 +213,9 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
         var remaining = createdAt.Value + Otp.ResendCooldown - time.GetUtcNow();
         return remaining > TimeSpan.Zero ? remaining : null;
     }
+
+    private ObjectResult InvalidResetToken() =>
+        Problem(title: "Invalid or expired reset token.", statusCode: StatusCodes.Status400BadRequest);
 
     private ObjectResult InvalidCode() =>
         Problem(title: "Invalid or expired code.", statusCode: StatusCodes.Status400BadRequest);
