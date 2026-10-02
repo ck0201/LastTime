@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using LastTime.Api.Data;
 using LastTime.Api.Domain;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
 namespace LastTime.Api.Features.Auth;
@@ -16,7 +17,14 @@ public static class Otp
     public const string EmailVerification = "EmailVerification";
     public const string PasswordReset = "PasswordReset";
 
+    /// <summary>
+    /// Not a code the user types: the opaque token handed out after a correct PasswordReset code, which the password
+    /// change will present. It lives in the same table (one row per user, single use, short lived).
+    /// </summary>
+    public const string PasswordResetToken = "PasswordResetToken";
+
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan ResendCooldown = TimeSpan.FromSeconds(60);
     public const int MaxFailedAttempts = 5;
 
     // Same mechanism as passwords: salted PBKDF2 from the ASP.NET Core shared framework.
@@ -33,8 +41,30 @@ public static class Otp
     public static async Task<string> IssueAsync(
         LastTimeDbContext db, TimeProvider time, User user, string purpose, CancellationToken ct = default)
     {
-        RequirePurpose(purpose);
+        if (purpose != EmailVerification && purpose != PasswordReset)
+            throw new ArgumentException($"Unknown OTP purpose '{purpose}'.", nameof(purpose));
+
         var code = GenerateCode();
+        await StoreAsync(db, time, user, purpose, code, ct);
+        return code;
+    }
+
+    /// <summary>
+    /// Creates the opaque token returned once a PasswordReset code was verified (a random 256-bit value, never
+    /// derivable from anything the client knows), replacing any earlier one. Redeem it with <see cref="VerifyAsync"/>
+    /// and <see cref="PasswordResetToken"/>. Like codes, it is stored only as a hash.
+    /// </summary>
+    public static async Task<string> IssueResetTokenAsync(
+        LastTimeDbContext db, TimeProvider time, User user, CancellationToken ct = default)
+    {
+        var token = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        await StoreAsync(db, time, user, PasswordResetToken, token, ct);
+        return token;
+    }
+
+    private static async Task StoreAsync(
+        LastTimeDbContext db, TimeProvider time, User user, string purpose, string code, CancellationToken ct)
+    {
         var hash = Hasher.HashPassword(user, code);
         var now = time.GetUtcNow();
         var expiresAt = now + Lifetime;
@@ -49,12 +79,10 @@ public static class Otp
                 "ExpiresAt" = EXCLUDED."ExpiresAt",
                 "FailedAttempts" = 0
             """, ct);
-
-        return code;
     }
 
     /// <summary>
-    /// True when <paramref name="code"/> is the user's current, unexpired code for the purpose and fewer than
+    /// True when <paramref name="code"/> (or a <see cref="PasswordResetToken"/>) is the user's current, unexpired value for the purpose and fewer than
     /// <see cref="MaxFailedAttempts"/> wrong guesses were made. A correct code is consumed (deleted), and for
     /// <see cref="EmailVerification"/> it also sets <see cref="User.EmailVerifiedAt"/>.
     /// </summary>
@@ -99,7 +127,7 @@ public static class Otp
 
     private static void RequirePurpose(string purpose)
     {
-        if (purpose != EmailVerification && purpose != PasswordReset)
+        if (purpose != EmailVerification && purpose != PasswordReset && purpose != PasswordResetToken)
             throw new ArgumentException($"Unknown OTP purpose '{purpose}'.", nameof(purpose));
     }
 }

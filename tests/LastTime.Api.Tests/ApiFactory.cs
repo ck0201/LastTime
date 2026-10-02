@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace LastTime.Api.Tests;
 
@@ -24,6 +25,12 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const string JwtIssuer = "last-time-tests";
     public const string JwtAudience = "last-time-tests-audience";
 
+    /// <summary>The clock the API uses for one-time codes. Reset to the real time before every test.</summary>
+    public ManualTimeProvider Time { get; } = new();
+
+    /// <summary>Receives every one-time code the API issues (there is no email delivery yet).</summary>
+    public CapturingOtpSender Sender { get; } = new();
+
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Default", ConnectionString);
@@ -32,7 +39,14 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:Audience", JwtAudience);
         builder.UseSetting("Jwt:ExpirationMinutes", "60");
         // Makes the test-only protected endpoint (TestProtectedController) available.
-        builder.ConfigureTestServices(s => s.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly));
+        builder.ConfigureTestServices(s =>
+        {
+            s.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly);
+            s.RemoveAll<TimeProvider>();
+            s.AddSingleton<TimeProvider>(Time);
+            s.RemoveAll<IOtpSender>();
+            s.AddSingleton<IOtpSender>(Sender);
+        });
     }
 
     public async Task InitializeAsync()
@@ -58,6 +72,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public async Task ResetAsync()
     {
+        Time.Set(DateTimeOffset.UtcNow);
+        Sender.Clear();
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LastTimeDbContext>();
         await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE users, otp_codes, items, history_entries RESTART IDENTITY CASCADE");
