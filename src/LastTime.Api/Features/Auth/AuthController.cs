@@ -24,6 +24,14 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
     // Used only to spend the same hashing time when an account does not exist (see ForgotPassword / VerifyPasswordReset).
     private static readonly string DummyHash = Hasher.HashPassword(new User(), "000000");
 
+    /// <summary>
+    /// Every forgot-password answer takes at least this long. Sending the email (a call to the provider) is by far the
+    /// slowest step and only happens for real accounts, so without a floor the response time would reveal which emails
+    /// are registered. Keep it comfortably above the provider's usual response time; a call that takes longer than this
+    /// is not hidden.
+    /// </summary>
+    public static readonly TimeSpan ForgotPasswordMinimumDuration = TimeSpan.FromMilliseconds(1500);
+
     [HttpPost("register")]
     public async Task<ActionResult<RegisterResponse>> Register(RegisterRequest request, CancellationToken ct)
     {
@@ -96,18 +104,27 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request, CancellationToken ct)
     {
-        var email = NormalizeEmail(request.Email);
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
+        var started = time.GetTimestamp();
+        try
+        {
+            var email = NormalizeEmail(request.Email);
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
 
-        if (user is { IsActive: true } && await CooldownRemainingAsync(user, Otp.PasswordReset, ct) is null)
-        {
-            var code = await Otp.IssueAsync(db, time, user, Otp.PasswordReset, ct);
-            await otpSender.SendAsync(user, Otp.PasswordReset, code, ct);
+            if (user is { IsActive: true } && await CooldownRemainingAsync(user, Otp.PasswordReset, ct) is null)
+            {
+                var code = await Otp.IssueAsync(db, time, user, Otp.PasswordReset, ct);
+                await otpSender.SendAsync(user, Otp.PasswordReset, code, ct);
+            }
+            else
+            {
+                // Unknown, inactive or within the cooldown: say nothing different, and do the same amount of hashing.
+                _ = Hasher.HashPassword(new User(), Otp.GenerateCode());
+            }
         }
-        else
+        finally
         {
-            // Unknown, inactive or within the cooldown: say nothing different, and take about as long.
-            _ = Hasher.HashPassword(new User(), Otp.GenerateCode());
+            // Whatever happened (including a failed provider call), wait out the rest of the minimum duration.
+            await PadToMinimumAsync(started, ForgotPasswordMinimumDuration, ct);
         }
 
         return Accepted();
@@ -137,6 +154,16 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
     }
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
+    /// <summary>
+    /// Waits until at least <paramref name="minimum"/> has passed since <paramref name="startedAt"/> (a TimeProvider
+    /// timestamp). No wait when the work already took that long. Cancellation is not swallowed.
+    /// </summary>
+    private async Task PadToMinimumAsync(long startedAt, TimeSpan minimum, CancellationToken ct)
+    {
+        var remaining = minimum - time.GetElapsedTime(startedAt);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining, time, ct);
+    }
 
     private Task<User?> CurrentActiveUserAsync(CancellationToken ct)
     {

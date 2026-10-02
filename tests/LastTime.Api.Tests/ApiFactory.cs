@@ -38,6 +38,9 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:Issuer", JwtIssuer);
         builder.UseSetting("Jwt:Audience", JwtAudience);
         builder.UseSetting("Jwt:ExpirationMinutes", "60");
+        // Never let a real Resend key (for example from user-secrets) reach a test run; tests never send real email.
+        builder.UseSetting("Resend:ApiKey", "");
+        builder.UseSetting("Resend:SenderEmail", "");
         // Makes the test-only protected endpoint (TestProtectedController) available.
         builder.ConfigureTestServices(s =>
         {
