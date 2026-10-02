@@ -3,6 +3,7 @@ import { Component, ElementRef, Injector, afterNextRender, effect, inject, signa
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { catchError, debounceTime, map, of, startWith, switchMap } from 'rxjs';
+import { Auth } from '../../core/auth';
 import { costFormat, relativeDate } from '../../core/format';
 import { ItemsApi } from '../../core/items-api';
 import { ItemSummary } from '../../core/models';
@@ -20,6 +21,7 @@ interface ListState {
 })
 export class ItemList {
   private readonly api = inject(ItemsApi);
+  protected readonly auth = inject(Auth);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
 

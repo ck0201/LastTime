@@ -3,6 +3,7 @@ import { Component, inject, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { Auth } from '../../core/auth';
+import { passwordValidators } from '../../core/password-rules';
 
 @Component({
   selector: 'app-register',
@@ -18,7 +19,7 @@ export class Register {
 
   protected readonly form = inject(NonNullableFormBuilder).group({
     email: ['', [Validators.required, Validators.email, Validators.maxLength(320)]],
-    password: ['', [Validators.required, Validators.minLength(8), Validators.maxLength(128)]],
+    password: ['', passwordValidators],
   });
 
   protected submit(): void {

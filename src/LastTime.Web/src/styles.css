@@ -8,6 +8,11 @@
   --accent-text: #ffffff;
   --danger: #c0392b;
   --danger-bg: #fdecea;
+  --warning: #7a4f00;
+  --warning-bg: #fff3d4;
+  --success: #1e6b3a;
+  --success-bg: #e5f6ea;
+  --info-bg: #e8effd;
   --radius: 10px;
   color-scheme: light dark;
 }
@@ -23,6 +28,11 @@
     --accent-text: #0b1020;
     --danger: #ff8a7a;
     --danger-bg: #3a1f1c;
+    --warning: #ffd27a;
+    --warning-bg: #3a2e12;
+    --success: #8fe0a8;
+    --success-bg: #17301f;
+    --info-bg: #1b2842;
   }
 }
 
@@ -93,6 +103,15 @@ body:has(app-item-list) .topbar { position: sticky; top: 0; z-index: 10; }
 
 .notice { padding: 10px 12px; border-radius: 8px; }
 .notice-error { background: var(--danger-bg); color: var(--danger); }
+.notice-warning { background: var(--warning-bg); color: var(--warning); }
+.notice-success { background: var(--success-bg); color: var(--success); }
+.notice-info { background: var(--info-bg); color: var(--text); }
+.verify-banner { margin-bottom: 14px; }
+.verify-banner p { margin: 0 0 6px; }
+.verify-banner .btn { margin-top: 4px; }
+.form-link { align-self: flex-start; font-size: 0.9rem; }
+.verify-form { margin-top: 18px; }
+.hint { margin-top: 14px; font-size: 0.9rem; }
 
 .empty { text-align: center; padding: 40px 16px; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
 

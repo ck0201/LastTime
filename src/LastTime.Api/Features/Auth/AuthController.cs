@@ -235,6 +235,8 @@ public class AuthController(LastTimeDbContext db, IOptions<JwtOptions> jwtOption
             [
                 new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
                 new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                // A snapshot of the user as loaded at login, written as a JSON boolean (the standard OIDC claim name).
+                new Claim("email_verified", (user.EmailVerifiedAt is not null).ToString().ToLowerInvariant(), ClaimValueTypes.Boolean),
             ]),
             Issuer = jwt.Issuer,
             Audience = jwt.Audience,

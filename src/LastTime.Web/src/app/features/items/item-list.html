@@ -3,6 +3,17 @@
   <a routerLink="/items/new" class="btn btn-primary">+ New item</a>
 </div>
 
+@if (auth.needsVerification()) {
+  <div class="notice notice-warning verify-banner" role="status">
+    <p><strong>Please verify your email address.</strong></p>
+    <p>
+      Your email is used to recover your account if you forget your password. If you don't verify it, we may not be able
+      to help you recover your account later.
+    </p>
+    <a class="btn btn-primary" routerLink="/verify-email">Verify email</a>
+  </div>
+}
+
 <input
   type="search"
   class="search"

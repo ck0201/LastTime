@@ -1,0 +1,56 @@
+<h1>Verify your email</h1>
+
+@if (auth.emailVerified()) {
+  <p class="notice notice-success">Your email address is verified. Thank you!</p>
+  <div class="actions">
+    <a class="btn btn-primary" routerLink="/">Back to your items</a>
+  </div>
+} @else {
+  <p class="muted">
+    We'll email you a 6-digit code. Enter it here to confirm this address, so we can help you if you ever forget your
+    password.
+  </p>
+
+  @if (notice()) {
+    <p class="notice notice-info">{{ notice() }}</p>
+  }
+  @if (error()) {
+    <p class="notice notice-error">{{ error() }}</p>
+  }
+
+  <div class="actions">
+    <button type="button" class="btn" [class.btn-primary]="!codeAsked()" [disabled]="sending() || waitSeconds() > 0" (click)="sendCode()">
+      {{ sendLabel() }}
+    </button>
+  </div>
+
+  @if (codeAsked()) {
+    <form (submit)="$event.preventDefault(); verify()" class="form verify-form" novalidate>
+      <label>
+        <span>6-digit code</span>
+        <input
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="10"
+          placeholder="123456"
+          [formControl]="code"
+        />
+        @if (code.touched && code.invalid) {
+          <small class="field-error">Enter the 6-digit code from the email.</small>
+        }
+      </label>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" [disabled]="verifying()">
+          {{ verifying() ? 'Verifying…' : 'Verify email' }}
+        </button>
+        <a class="btn" routerLink="/">Not now</a>
+      </div>
+    </form>
+  } @else {
+    <div class="actions">
+      <a class="btn" routerLink="/">Not now</a>
+    </div>
+  }
+}

@@ -26,7 +26,8 @@ var allowedOrigins = (builder.Configuration.GetSection("Cors:AllowedOrigins").Ge
 builder.Services.AddCors(options => options.AddPolicy(CorsPolicyName, policy => policy
     .WithOrigins(allowedOrigins)
     .WithMethods("GET", "POST", "PUT", "DELETE") // OPTIONS preflight is answered by the CORS middleware
-    .AllowAnyHeader()));
+    .AllowAnyHeader()
+    .WithExposedHeaders("Retry-After"))); // lets the browser app read how long to wait after a 429
 // JWT settings come from the "Jwt" section. The secret is supplied per environment (user-secrets locally,
 // the Jwt__Secret environment variable on Render) and must never be committed.
 var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
