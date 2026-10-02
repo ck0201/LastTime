@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, UrlTree, provideRouter } from '@angular/router';
 import { ItemDetail } from '../../core/models';
 import { ItemDetailPage } from './item-detail';
 
@@ -50,6 +50,177 @@ describe('ItemDetailPage', () => {
     expect(text).toContain('12 Aug 2026');
     expect(text).toContain('CoolCare Services');
     expect(text).toContain('Gas checked');
+  });
+
+  describe('item header', () => {
+    it('shows a back link to the item list, the item name and its description', async () => {
+      const root = await render(detail);
+      const bar = root.querySelector('header.item-bar')!;
+
+      const back = bar.querySelector<HTMLAnchorElement>('a.item-back')!;
+      expect(back.getAttribute('href')).toBe('/');
+      expect(back.getAttribute('aria-label')).toBe('Back to all items');
+      expect(bar.querySelector('h1')!.textContent).toContain('LG AC');
+      expect(bar.querySelector('p')!.textContent).toContain('Bedroom');
+    });
+
+    it('omits the description line when the item has none', async () => {
+      const root = await render({ ...detail, description: null });
+      const bar = root.querySelector('header.item-bar')!;
+      expect(bar.querySelector('h1')!.textContent).toContain('LG AC');
+      expect(bar.querySelector('p')).toBeNull();
+    });
+
+    it('keeps the back link when the item cannot be loaded', async () => {
+      const root = await render(null);
+      expect(root.querySelector('header.item-bar a.item-back')).not.toBeNull();
+      expect(root.querySelector('header.item-bar h1')).toBeNull();
+      expect(root.querySelector('.notice-error')!.textContent).toContain("Couldn't find this item");
+    });
+
+    describe('item actions menu', () => {
+      const settle = () => TestBed.inject(ApplicationRef).whenStable();
+      const toggle = (root: HTMLElement) => root.querySelector<HTMLButtonElement>('.item-menu-toggle')!;
+      const menu = (root: HTMLElement) => root.querySelector<HTMLElement>('#item-menu');
+      const items = (root: HTMLElement) =>
+        Array.from(menu(root)!.querySelectorAll('.item-menu-item')).map((i) => i.textContent?.trim());
+      async function open(root: HTMLElement) {
+        toggle(root).click();
+        await settle();
+      }
+
+      it('replaces the separate Edit/Delete row: no row below the header, one menu button inside it', async () => {
+        const root = await render(detail);
+        expect(root.querySelector('.item-actions')).toBeNull();
+        expect(root.querySelector('.page-head')).toBeNull();
+        // No Edit or Delete button is rendered outside the (closed) menu.
+        const stray = Array.from(root.querySelectorAll('.btn')).filter((b) => /^(Edit|Delete)/.test(b.textContent!.trim()));
+        expect(stray).toEqual([]);
+
+        const button = toggle(root);
+        expect(root.querySelector('header.item-bar')!.contains(button)).toBe(true);
+        expect(button.getAttribute('aria-label')).toBe('Item actions');
+        expect(button.getAttribute('aria-expanded')).toBe('false');
+        expect(button.getAttribute('aria-controls')).toBe('item-menu');
+        expect(menu(root)).toBeNull();
+      });
+
+      it('has no menu while loading or when the item cannot be loaded', async () => {
+        const root = await render(null);
+        expect(root.querySelector('.item-menu-toggle')).toBeNull();
+      });
+
+      it('opens with Edit and a destructive Delete, and the toggle reports it is expanded', async () => {
+        const root = await render(detail);
+        await open(root);
+
+        expect(toggle(root).getAttribute('aria-expanded')).toBe('true');
+        expect(items(root)).toEqual(['Edit', 'Delete']);
+        const edit = menu(root)!.querySelector('a.item-menu-item')!;
+        expect(edit.getAttribute('href')).toBe('/items/i1/edit');
+        const del = menu(root)!.querySelector('button.item-menu-item')!;
+        expect(del.classList.contains('item-menu-danger')).toBe(true);
+      });
+
+      it('closes when the button is pressed again, on Escape, and on an outside click', async () => {
+        const root = await render(detail);
+
+        await open(root);
+        toggle(root).click();
+        await settle();
+        expect(menu(root)).toBeNull();
+
+        await open(root);
+        toggle(root).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await settle();
+        expect(menu(root)).toBeNull();
+        expect(toggle(root).getAttribute('aria-expanded')).toBe('false');
+
+        await open(root);
+        root.querySelector<HTMLElement>('.item-menu-backdrop')!.click();
+        await settle();
+        expect(menu(root)).toBeNull();
+      });
+
+      it('Edit goes to the existing edit page and closes the menu', async () => {
+        const root = await render(detail);
+        await open(root);
+        const router = TestBed.inject(Router);
+        const navigate = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true); // the test router has no routes
+        const edit = menu(root)!.querySelector<HTMLAnchorElement>('a.item-menu-item')!;
+        edit.click();
+        await settle();
+
+        expect(navigate).toHaveBeenCalledTimes(1);
+        expect(router.serializeUrl(navigate.mock.calls[0][0] as UrlTree)).toBe('/items/i1/edit');
+        expect(menu(root)).toBeNull();
+      });
+
+      it('Delete asks for confirmation inside the menu, and confirming deletes the item', async () => {
+        const root = await render(detail);
+        const http = TestBed.inject(HttpTestingController);
+        await open(root);
+
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        await settle();
+        http.expectNone((r) => r.method === 'DELETE'); // nothing is deleted by the first tap
+        expect(items(root)).toEqual(['Delete item and history?', 'Keep']);
+        expect(menu(root)!.querySelector('.item-menu-danger')!.textContent).toContain('Delete item and history?');
+
+        menu(root)!.querySelector<HTMLButtonElement>('.item-menu-danger')!.click();
+        const req = http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/items/i1');
+        req.flush(null, { status: 204, statusText: 'No Content' });
+        await settle();
+      });
+
+      it('Keep closes the menu without deleting, and reopening starts again at Edit / Delete', async () => {
+        const root = await render(detail);
+        const http = TestBed.inject(HttpTestingController);
+        await open(root);
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        await settle();
+
+        Array.from(menu(root)!.querySelectorAll<HTMLButtonElement>('button.item-menu-item'))
+          .find((b) => b.textContent?.trim() === 'Keep')!
+          .click();
+        await settle();
+        expect(menu(root)).toBeNull();
+        http.expectNone((r) => r.method === 'DELETE');
+
+        await open(root);
+        expect(items(root)).toEqual(['Edit', 'Delete']);
+      });
+
+      it('closing the menu with Escape abandons a half-finished delete confirmation', async () => {
+        const root = await render(detail);
+        await open(root);
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        await settle();
+
+        toggle(root).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await settle();
+        await open(root);
+        expect(items(root)).toEqual(['Edit', 'Delete']);
+      });
+
+      it('shows a delete failure below the header', async () => {
+        const root = await render(detail);
+        const http = TestBed.inject(HttpTestingController);
+        await open(root);
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click();
+        await settle();
+        menu(root)!.querySelector<HTMLButtonElement>('.item-menu-danger')!.click();
+        http.expectOne((r) => r.method === 'DELETE').flush('no', { status: 500, statusText: 'Server Error' });
+        await settle();
+
+        expect(root.querySelector('.notice-error')!.textContent).toContain("Couldn't delete the item.");
+      });
+    });
+
+    it('has a single h1, so the item name is the page heading', async () => {
+      const root = await render(detail);
+      expect(root.querySelectorAll('h1').length).toBe(1);
+    });
   });
 
   describe('insights', () => {

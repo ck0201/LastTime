@@ -50,6 +50,19 @@ export class ItemDetailPage implements OnInit {
   /** Inline two-step delete confirmation (avoids blocking browser dialogs). */
   protected readonly confirmDeleteEntryId = signal<string | null>(null);
   protected readonly confirmDeleteItem = signal(false);
+
+  /** The ⋮ menu in the item header (Edit / Delete). Closing it also abandons a half-finished delete confirmation. */
+  protected readonly menuOpen = signal(false);
+
+  protected toggleMenu(): void {
+    if (this.menuOpen()) this.closeMenu();
+    else this.menuOpen.set(true);
+  }
+
+  protected closeMenu(): void {
+    this.menuOpen.set(false);
+    this.confirmDeleteItem.set(false);
+  }
   protected readonly actionError = signal<string | null>(null);
 
   protected readonly costFormat = costFormat;

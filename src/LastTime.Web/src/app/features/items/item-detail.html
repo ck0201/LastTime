@@ -1,4 +1,37 @@
-<a routerLink="/" class="back">← All items</a>
+<header class="item-bar">
+  <a routerLink="/" class="item-back" aria-label="Back to all items" title="All items">←</a>
+  @if (item(); as header) {
+    <div class="item-bar-text">
+      <h1>{{ header.name }}</h1>
+      @if (header.description) {
+        <p>{{ header.description }}</p>
+      }
+    </div>
+    <div class="item-menu-wrap" (keydown.escape)="closeMenu(); menuToggle.focus()">
+      <button
+        #menuToggle
+        type="button"
+        class="item-menu-toggle"
+        aria-label="Item actions"
+        aria-controls="item-menu"
+        [attr.aria-expanded]="menuOpen()"
+        (click)="toggleMenu()"
+      >⋮</button>
+      @if (menuOpen()) {
+        <div class="item-menu-backdrop" aria-hidden="true" (click)="closeMenu()"></div>
+        <div id="item-menu" class="item-menu">
+          @if (confirmDeleteItem()) {
+            <button type="button" class="item-menu-item item-menu-danger" (click)="deleteItem()">Delete item and history?</button>
+            <button type="button" class="item-menu-item" (click)="closeMenu()">Keep</button>
+          } @else {
+            <a class="item-menu-item" [routerLink]="['/items', header.id, 'edit']" (click)="closeMenu()">Edit</a>
+            <button type="button" class="item-menu-item item-menu-danger" (click)="confirmDeleteItem.set(true)">Delete</button>
+          }
+        </div>
+      }
+    </div>
+  }
+</header>
 
 @if (loading()) {
   <p class="muted">Loading…</p>
@@ -6,24 +39,6 @@
   <p class="notice notice-error">Couldn't find this item.</p>
 } @else {
   @let it = item()!;
-
-  <div class="page-head">
-    <div>
-      <h1>{{ it.name }}</h1>
-      @if (it.description) {
-        <p class="muted">{{ it.description }}</p>
-      }
-    </div>
-    <div class="actions">
-      <a class="btn" [routerLink]="['/items', it.id, 'edit']">Edit</a>
-      @if (confirmDeleteItem()) {
-        <button type="button" class="btn btn-danger" (click)="deleteItem()">Delete item and history?</button>
-        <button type="button" class="btn" (click)="confirmDeleteItem.set(false)">Keep</button>
-      } @else {
-        <button type="button" class="btn" (click)="confirmDeleteItem.set(true)">Delete</button>
-      }
-    </div>
-  </div>
 
   @if (actionError()) {
     <p class="notice notice-error">{{ actionError() }}</p>

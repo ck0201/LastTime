@@ -30,11 +30,17 @@
 } @else {
   <ul class="cards">
     @for (item of s.items; track item.id) {
-      <li>
-        <a class="card" [routerLink]="['/items', item.id]">
+      <li class="card-wrap">
+        <a class="card" [class.card-has-more]="overflowing().has(item.id)" [routerLink]="['/items', item.id]">
           <span class="card-title">{{ item.name }}</span>
           @if (item.description) {
-            <span class="card-sub">{{ item.description }}</span>
+            <span
+              class="card-sub"
+              [class.card-sub-clamped]="!expanded().has(item.id)"
+              [id]="'desc-' + item.id"
+              [attr.data-id]="item.id"
+              >{{ item.description }}</span
+            >
           }
           @if (item.lastEntry; as last) {
             <span class="card-last">
@@ -49,6 +55,18 @@
             <span class="card-meta">No history yet</span>
           }
         </a>
+        @if (overflowing().has(item.id)) {
+          <button
+            type="button"
+            class="card-more"
+            [attr.aria-expanded]="expanded().has(item.id)"
+            [attr.aria-controls]="'desc-' + item.id"
+            [attr.aria-label]="(expanded().has(item.id) ? 'Read less: ' : 'Read more: ') + item.name"
+            (click)="toggleDescription(item.id)"
+          >
+            {{ expanded().has(item.id) ? 'Read less' : 'Read more' }}
+          </button>
+        }
       </li>
     }
   </ul>
