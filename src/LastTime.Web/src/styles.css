@@ -64,6 +64,11 @@ main.container { padding-top: 20px; padding-bottom: 48px; }
 body:has(app-item-list) .topbar { position: sticky; top: 0; z-index: 10; }
 
 .muted { color: var(--muted); }
+.site-footer { display: flex; flex-wrap: wrap; gap: 4px 8px; padding-bottom: 28px; color: var(--muted); font-size: 0.85rem; }
+.page-text section { margin-top: 20px; }
+.page-text h2 { margin-bottom: 6px; }
+.page-text ul { margin: 0; padding-left: 1.2rem; }
+.page-text li { margin: 5px 0; }
 .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
 
 .page-head, .section-head {

@@ -7,11 +7,13 @@ import { VerifyEmail } from './features/auth/verify-email';
 import { ItemDetailPage } from './features/items/item-detail';
 import { ItemForm } from './features/items/item-form';
 import { ItemList } from './features/items/item-list';
+import { Privacy } from './features/privacy/privacy';
 
 export const routes: Routes = [
   { path: 'login', component: Login, title: 'Sign in · Last Time' },
   { path: 'register', component: Register, title: 'Create account · Last Time' },
   { path: 'forgot-password', component: ForgotPassword, title: 'Forgot password · Last Time' },
+  { path: 'privacy', component: Privacy, title: 'Privacy & Security · Last Time' },
   {
     path: '',
     canActivate: [authGuard],
