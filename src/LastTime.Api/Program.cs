@@ -52,7 +52,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 builder.Services.AddAuthorization();
-// One-time codes: the clock (replaceable in tests) and where issued codes go (Resend, behind a daily limit).
+// One-time codes: the clock (replaceable in tests) and where issued codes go (SMTP, behind a daily limit).
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddOtpDelivery(builder.Configuration);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

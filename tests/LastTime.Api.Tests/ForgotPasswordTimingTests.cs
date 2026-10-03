@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using LastTime.Api.Data;
 using LastTime.Api.Domain;
 using LastTime.Api.Features.Auth;
+using MailKit.Net.Smtp;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -111,28 +112,28 @@ public class ForgotPasswordTimingTests(ApiFactory factory) : IAsyncLifetime
     // ---- the minimum applies whatever the provider does
 
     [Fact]
-    public async Task WhenResendFails_TheResponseIsStillPadded()
+    public async Task WhenDeliveryFails_TheResponseIsStillPadded()
     {
-        var handler = new RecordingHandler
+        var smtp = new RecordingTransport
         {
-            Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)),
+            Behavior = _ => throw new SmtpCommandException(SmtpErrorCode.MessageNotAccepted, SmtpStatusCode.TransactionFailed, "rejected"),
         };
-        await using var host = WithRealSender(handler);
+        await using var host = WithRealSender(smtp);
         var client = host.CreateClient();
         Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new { email = "user@example.com", password = "Password123!" })).StatusCode);
 
         var result = await ForgotAsync("user@example.com", client);
 
         Assert.Equal(HttpStatusCode.Accepted, result.Status);
-        Assert.Single(handler.Requests); // Resend was called, and failed
+        Assert.Single(smtp.Messages); // SMTP was called, and failed
         Assert.Equal(Minimum, result.Elapsed);
     }
 
     [Fact]
-    public async Task WhenResendIsUnreachable_TheResponseIsStillPadded()
+    public async Task WhenTheMailServerIsUnreachable_TheResponseIsStillPadded()
     {
-        var handler = new RecordingHandler { Respond = (_, _) => throw new HttpRequestException("no route to host") };
-        await using var host = WithRealSender(handler);
+        var smtp = new RecordingTransport { Behavior = _ => throw new IOException("no route to host") };
+        await using var host = WithRealSender(smtp);
         var client = host.CreateClient();
         await client.PostAsJsonAsync("/api/auth/register", new { email = "user@example.com", password = "Password123!" });
 
@@ -239,25 +240,27 @@ public class ForgotPasswordTimingTests(ApiFactory factory) : IAsyncLifetime
         Assert.True(Minimum <= TimeSpan.FromSeconds(5), $"minimum {Minimum} would make the endpoint feel broken");
     }
 
-    // ---- wiring: the real Resend sender, with its HTTP replaced by a fake
+    // ---- wiring: the real SMTP sender, with its transport replaced by a recorder
 
-    private WebApplicationFactory<Program> WithRealSender(RecordingHandler provider) =>
+    private WebApplicationFactory<Program> WithRealSender(RecordingTransport smtp) =>
         factory.WithWebHostBuilder(builder =>
         {
             var settings = new Dictionary<string, string?>
             {
-                ["Resend:ApiKey"] = "test-api-key",
-                ["Resend:SenderEmail"] = "onboarding@resend.dev",
-                ["Resend:SenderName"] = "LastTime",
+                ["Smtp:Username"] = "lasttime.sender@example.test",
+                ["Smtp:Password"] = "test-app-password",
+                ["Smtp:SenderEmail"] = "lasttime.sender@example.test",
+                ["Smtp:SenderName"] = "LastTime",
                 ["Email:DailyLimit"] = "100",
             };
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IOtpSender>();
-                services.RemoveAll<ResendOtpSender>();
+                services.RemoveAll<SmtpOtpSender>();
                 services.AddOtpDelivery(configuration);
-                services.AddHttpClient(ResendOtpSender.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => provider);
+                services.RemoveAll<SmtpTransport>();
+                services.AddSingleton<SmtpTransport>(smtp.AsTransport);
             });
         });
 }

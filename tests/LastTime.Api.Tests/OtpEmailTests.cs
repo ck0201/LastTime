@@ -1,11 +1,11 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using LastTime.Api.Domain;
 using LastTime.Api.Features.Auth;
+using MailKit.Net.Smtp;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -13,43 +13,44 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MimeKit;
 
 namespace LastTime.Api.Tests;
 
-// ---------------------------------------------------------------- doubles for the provider boundary
+// ---------------------------------------------------------------- doubles for the delivery boundary
 
-/// <summary>Stands in for the network: records every request Resend would have received, and answers as told.</summary>
-public sealed class RecordingHandler : HttpMessageHandler
+/// <summary>Stands in for SMTP: records every message that would have been sent, and behaves as told. Nothing leaves the process.</summary>
+public sealed class RecordingTransport
 {
-    public sealed record Request(HttpMethod Method, Uri? Uri, string? Authorization, string Body)
+    public sealed record Sent(SmtpOptions Options, MimeMessage Message)
     {
-        public JsonElement Json => JsonDocument.Parse(Body).RootElement;
-        public string Text => Json.GetProperty("text").GetString()!;
-        public string Html => Json.GetProperty("html").GetString()!;
-        public string Subject => Json.GetProperty("subject").GetString()!;
-        public string From => Json.GetProperty("from").GetString()!;
-        public string[] To => Json.GetProperty("to").EnumerateArray().Select(e => e.GetString()!).ToArray();
+        public string[] To => Message.To.Mailboxes.Select(m => m.Address).ToArray();
+        public MailboxAddress From => Message.From.Mailboxes.Single();
+        public string Subject => Message.Subject ?? "";
+        public string Text => Message.TextBody ?? "";
+        public string Html => Message.HtmlBody ?? "";
         public string Code => Regex.Match(Text, @"\b\d{6}\b").Value;
     }
 
-    private readonly List<Request> _requests = [];
-    public IReadOnlyList<Request> Requests { get { lock (_requests) return _requests.ToArray(); } }
+    private readonly List<Sent> _sent = [];
+    public IReadOnlyList<Sent> Messages { get { lock (_sent) return _sent.ToArray(); } }
 
-    public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
-        (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { id = "email-id" }) });
+    /// <summary>What happens on each send; the default succeeds.</summary>
+    public Func<CancellationToken, Task> Behavior { get; set; } = _ => Task.CompletedTask;
 
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    public SmtpTransport AsTransport => SendAsync;
+
+    private async Task SendAsync(SmtpOptions options, MimeMessage message, CancellationToken ct)
     {
-        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
-        lock (_requests) _requests.Add(new Request(request.Method, request.RequestUri, request.Headers.Authorization?.ToString(), body));
-        return await Respond(request, ct);
+        // a copy of the options, as they were at the moment of sending
+        var snapshot = new SmtpOptions
+        {
+            Host = options.Host, Port = options.Port, Username = options.Username,
+            Password = options.Password, SenderEmail = options.SenderEmail, SenderName = options.SenderName,
+        };
+        lock (_sent) _sent.Add(new Sent(snapshot, message));
+        await Behavior(ct);
     }
-}
-
-public sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
-{
-    // Same base address as the real registration, so the sender's relative "emails" path resolves the same way.
-    public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { BaseAddress = new Uri("https://api.resend.com/") };
 }
 
 public sealed class ListLogger<T> : ILogger<T>
@@ -81,15 +82,111 @@ public sealed class CountingSender : IOtpSender
     }
 }
 
+/// <summary>
+/// A tiny local SMTP server that does NOT offer STARTTLS or AUTH, and records every line the client sends. It lets a
+/// test run the real MailKit transport against something safe: no real server, no network beyond loopback.
+/// </summary>
+public sealed class PlainSmtpServer : IAsyncDisposable
+{
+    private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+    private readonly List<string> _lines = [];
+    private readonly Task _loop;
+
+    public PlainSmtpServer()
+    {
+        _listener.Start();
+        _loop = Task.Run(AcceptAsync);
+    }
+
+    public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
+    public IReadOnlyList<string> LinesReceived { get { lock (_lines) return _lines.ToArray(); } }
+
+    private async Task AcceptAsync()
+    {
+        try
+        {
+            using var client = await _listener.AcceptTcpClientAsync();
+            using var stream = client.GetStream();
+            using var reader = new StreamReader(stream, Encoding.ASCII);
+            await using var writer = new StreamWriter(stream, new ASCIIEncoding()) { NewLine = "\r\n", AutoFlush = true };
+
+            await writer.WriteLineAsync("220 localhost test ESMTP");
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                lock (_lines) _lines.Add(line);
+                var verb = line.Split(' ')[0].ToUpperInvariant();
+                if (verb is "EHLO") { await writer.WriteLineAsync("250-localhost"); await writer.WriteLineAsync("250-AUTH PLAIN LOGIN"); await writer.WriteLineAsync("250 8BITMIME"); }
+                else if (verb is "HELO") await writer.WriteLineAsync("250 localhost");
+                else if (verb is "QUIT") { await writer.WriteLineAsync("221 bye"); break; }
+                else await writer.WriteLineAsync("250 ok");
+            }
+        }
+        catch (Exception)
+        {
+            // the client hung up; that is the expected end
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _listener.Stop();
+        await Task.WhenAny(_loop, Task.Delay(2000));
+    }
+}
+
+// ---------------------------------------------------------------- settings
+
+public class SmtpOptionsTests
+{
+    [Fact]
+    public void DefaultsToGmailOnPort587()
+    {
+        var options = new SmtpOptions();
+        Assert.Equal("smtp.gmail.com", options.Host);
+        Assert.Equal(587, options.Port);
+    }
+
+    [Fact]
+    public void BindsFromTheSmtpSection_WithTheDocumentedKeys()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Smtp:Host"] = "mail.example.test",
+            ["Smtp:Port"] = "2525",
+            ["Smtp:Username"] = "user@example.test",
+            ["Smtp:Password"] = "p4ss",
+            ["Smtp:SenderEmail"] = "from@example.test",
+            ["Smtp:SenderName"] = "LastTime",
+        }).Build();
+
+        var options = configuration.GetSection(SmtpOptions.SectionName).Get<SmtpOptions>()!;
+
+        Assert.Equal(("mail.example.test", 2525, "user@example.test", "p4ss", "from@example.test", "LastTime"),
+            (options.Host, options.Port, options.Username, options.Password, options.SenderEmail, options.SenderName));
+    }
+
+    [Theory]
+    [InlineData("u", "p", "s", true)]
+    [InlineData("", "p", "s", false)]
+    [InlineData("u", "", "s", false)]
+    [InlineData("u", "p", "", false)]
+    [InlineData("  ", "p", "s", false)]
+    public void IsConfigured_NeedsUsernamePasswordAndSenderEmail(string username, string password, string sender, bool expected)
+    {
+        var options = new SmtpOptions { Username = username, Password = password, SenderEmail = sender };
+        Assert.Equal(expected, options.IsConfigured);
+    }
+}
+
 // ---------------------------------------------------------------- content, sender and failure handling
 
-public class ResendOtpSenderTests
+public class SmtpOtpSenderTests
 {
-    private const string ApiKey = "test-api-key-should-never-appear-in-logs";
+    private const string Password = "gmail-app-password-should-never-appear";
     private const string Code = "482913";
 
-    private readonly RecordingHandler _handler = new();
-    private readonly ListLogger<ResendOtpSender> _log = new();
+    private readonly RecordingTransport _transport = new();
+    private readonly ListLogger<SmtpOtpSender> _log = new();
 
     private static readonly User Recipient = new()
     {
@@ -98,9 +195,9 @@ public class ResendOtpSenderTests
         PasswordHash = "stored-password-hash-value",
     };
 
-    private ResendOtpSender Sender(string senderName = "LastTime", string senderEmail = "onboarding@resend.dev") =>
-        new(new StubHttpClientFactory(_handler),
-            Options.Create(new ResendOptions { ApiKey = ApiKey, SenderEmail = senderEmail, SenderName = senderName }),
+    private SmtpOtpSender Sender(string senderName = "LastTime", string senderEmail = "lasttime.sender@example.test") =>
+        new(_transport.AsTransport,
+            Options.Create(new SmtpOptions { Username = "lasttime.sender@example.test", Password = Password, SenderEmail = senderEmail, SenderName = senderName }),
             _log);
 
     [Fact]
@@ -108,16 +205,13 @@ public class ResendOtpSenderTests
     {
         await Sender().SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
 
-        var request = Assert.Single(_handler.Requests);
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("https://api.resend.com/emails", request.Uri!.ToString());
-        Assert.Equal($"Bearer {ApiKey}", request.Authorization);
-        Assert.Equal(["recipient@example.com"], request.To);
-        Assert.Contains("verification", request.Subject, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("verify your email address", request.Text);
-        Assert.Contains("LastTime", request.Text);
-        Assert.Contains(Code, request.Text);
-        Assert.Contains(Code, request.Html);
+        var sent = Assert.Single(_transport.Messages);
+        Assert.Equal(["recipient@example.com"], sent.To);
+        Assert.Equal("Your LastTime verification code", sent.Subject);
+        Assert.Contains("verify your email address", sent.Text);
+        Assert.Contains("LastTime", sent.Text);
+        Assert.Contains(Code, sent.Text);
+        Assert.Contains(Code, sent.Html);
     }
 
     [Fact]
@@ -125,14 +219,28 @@ public class ResendOtpSenderTests
     {
         await Sender().SendAsync(Recipient, Otp.PasswordReset, Code, CancellationToken.None);
 
-        var request = Assert.Single(_handler.Requests);
-        Assert.Equal(["recipient@example.com"], request.To);
-        Assert.Contains("password reset", request.Subject, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("reset the password", request.Text);
-        Assert.Contains("LastTime", request.Text);
-        Assert.Contains(Code, request.Text);
-        Assert.Contains(Code, request.Html);
-        Assert.DoesNotContain("verify your email", request.Text);
+        var sent = Assert.Single(_transport.Messages);
+        Assert.Equal(["recipient@example.com"], sent.To);
+        Assert.Equal("Your LastTime password reset code", sent.Subject);
+        Assert.Contains("reset the password", sent.Text);
+        Assert.Contains(Code, sent.Text);
+        Assert.Contains(Code, sent.Html);
+        Assert.DoesNotContain("verify your email", sent.Text);
+    }
+
+    [Theory]
+    [InlineData(Otp.EmailVerification)]
+    [InlineData(Otp.PasswordReset)]
+    public async Task TheSubjectsAndBodies_AreExactlyTheExistingTemplates(string purpose)
+    {
+        var expected = OtpEmail.For(purpose, Code);
+
+        await Sender().SendAsync(Recipient, purpose, Code, CancellationToken.None);
+
+        var sent = Assert.Single(_transport.Messages);
+        Assert.Equal(expected.Subject, sent.Subject);
+        Assert.Equal(expected.Text, sent.Text.Replace("\r\n", "\n"));
+        Assert.Equal(expected.Html, sent.Html);
     }
 
     [Theory]
@@ -142,94 +250,95 @@ public class ResendOtpSenderTests
     {
         await Sender().SendAsync(Recipient, purpose, Code, CancellationToken.None);
 
-        var request = Assert.Single(_handler.Requests);
+        var sent = Assert.Single(_transport.Messages);
         var expected = $"{(int)Otp.Lifetime.TotalMinutes} minutes";
-        Assert.Contains(expected, request.Text);
-        Assert.Contains(expected, request.Html);
+        Assert.Contains(expected, sent.Text);
+        Assert.Contains(expected, sent.Html);
     }
 
     [Theory]
     [InlineData(Otp.EmailVerification)]
     [InlineData(Otp.PasswordReset)]
-    public async Task Emails_ContainNoAccountDetails_AndNoResetToken(string purpose)
+    public async Task Emails_ContainNoAccountDetails_NoResetToken_AndNoCredentials(string purpose)
     {
         await Sender().SendAsync(Recipient, purpose, Code, CancellationToken.None);
 
-        var request = Assert.Single(_handler.Requests);
-        foreach (var body in new[] { request.Text, request.Html, request.Subject })
+        var sent = Assert.Single(_transport.Messages);
+        foreach (var body in new[] { sent.Text, sent.Html, sent.Subject })
         {
             Assert.DoesNotContain(Recipient.PasswordHash, body);
             Assert.DoesNotContain(Recipient.Email, body);
             Assert.DoesNotContain(Recipient.Id.ToString(), body);
             Assert.DoesNotContain("token", body, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(ApiKey, body);
+            Assert.DoesNotContain(Password, body);
         }
+        Assert.DoesNotContain(Password, sent.Message.ToString()); // not in any header either
     }
 
     [Fact]
     public async Task TheConfiguredSenderIsUsed()
     {
-        await Sender("LastTime", "onboarding@resend.dev").SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
+        await Sender("LastTime", "lasttime.sender@example.test").SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
         await Sender("Acme Support", "support@acme.example").SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
         await Sender("", "plain@acme.example").SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
 
         Assert.Equal(
-            ["LastTime <onboarding@resend.dev>", "Acme Support <support@acme.example>", "plain@acme.example"],
-            _handler.Requests.Select(r => r.From));
+            [("LastTime", "lasttime.sender@example.test"), ("Acme Support", "support@acme.example"), ("", "plain@acme.example")],
+            _transport.Messages.Select(m => (m.From.Name, m.From.Address)));
     }
 
     [Fact]
-    public async Task WhenResendRejectsTheEmail_NothingIsThrown_AndTheLogHasNoSecrets()
+    public async Task TheTransportReceivesTheConfiguredConnectionSettings()
     {
-        _handler.Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
-        {
-            Content = JsonContent.Create(new
-            {
-                name = "validation_error",
-                message = "You can only send testing emails to your own email address (owner@example.com).",
-            }),
-        });
+        await Sender().SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
+
+        var options = Assert.Single(_transport.Messages).Options;
+        Assert.Equal("smtp.gmail.com", options.Host);
+        Assert.Equal(587, options.Port);
+        Assert.Equal("lasttime.sender@example.test", options.Username);
+        Assert.Equal(Password, options.Password); // handed to the transport only, never logged or put in the message
+    }
+
+    [Theory]
+    [MemberData(nameof(DeliveryFailures))]
+    public async Task WhenDeliveryFails_NothingIsThrown_AndTheLogHasNoSecrets(Exception failure)
+    {
+        _transport.Behavior = _ => throw failure;
 
         await Sender().SendAsync(Recipient, Otp.PasswordReset, Code, CancellationToken.None); // must not throw
 
         Assert.Contains(LogLevel.Error, _log.Levels);
-        Assert.Contains("403", _log.All);
-        Assert.Contains("validation_error", _log.All);
-        foreach (var secret in new[] { Code, ApiKey, "owner@example.com", Recipient.Email, Recipient.PasswordHash })
+        Assert.Contains(failure.GetType().Name, _log.All);
+        foreach (var secret in new[] { Code, Password, "lasttime.sender@example.test", Recipient.Email, Recipient.PasswordHash })
             Assert.DoesNotContain(secret, _log.All);
+        Assert.DoesNotContain("echoed", _log.All); // server reply text is not logged
     }
 
-    [Fact]
-    public async Task WhenTheNetworkFails_NothingIsThrown_AndTheLogHasNoSecrets()
+    public static TheoryData<Exception> DeliveryFailures() => new()
     {
-        _handler.Respond = (_, _) => throw new HttpRequestException("connection refused");
+        new SmtpCommandException(SmtpErrorCode.RecipientNotAccepted, SmtpStatusCode.MailboxUnavailable, "550 no such user recipient@example.com echoed by the server"),
+        new MailKit.Security.AuthenticationException("535 5.7.8 Username and Password not accepted echoed"),
+        new IOException("connection reset echoed"),
+        new SocketException((int)SocketError.ConnectionRefused),
+        new TimeoutException("echoed"),
+        new TaskCanceledException("echoed (a timeout, not the caller)"),
+    };
+
+    [Fact]
+    public async Task ASmtpRejection_LogsItsStatusCode_ButNotItsText()
+    {
+        _transport.Behavior = _ => throw new SmtpCommandException(SmtpErrorCode.MessageNotAccepted, SmtpStatusCode.TransactionFailed, "554 secret reply text");
 
         await Sender().SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
 
-        Assert.Contains(LogLevel.Error, _log.Levels);
-        Assert.Contains("connection refused", _log.All);
-        foreach (var secret in new[] { Code, ApiKey, Recipient.Email })
-            Assert.DoesNotContain(secret, _log.All);
-    }
-
-    [Fact]
-    public async Task WhenTheRequestTimesOut_NothingIsThrown()
-    {
-        _handler.Respond = (_, _) => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
-
-        await Sender().SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None);
-
-        Assert.Contains(LogLevel.Error, _log.Levels);
+        Assert.Contains("TransactionFailed", _log.All);
+        Assert.DoesNotContain("secret reply text", _log.All);
     }
 
     [Fact]
     public async Task WhenTheCallerCancels_ThatIsNotSwallowed()
     {
-        _handler.Respond = async (_, ct) =>
-        {
-            await Task.Delay(Timeout.Infinite, ct);
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        };
+        _transport.Behavior = async ct => await Task.Delay(Timeout.Infinite, ct);
         using var cts = new CancellationTokenSource();
         var sending = Sender().SendAsync(Recipient, Otp.EmailVerification, Code, cts.Token);
 
@@ -250,9 +359,49 @@ public class ResendOtpSenderTests
     {
         await Sender().SendAsync(Recipient, "Whatever", Code, CancellationToken.None);
 
-        Assert.Empty(_handler.Requests);
+        Assert.Empty(_transport.Messages);
         Assert.Contains(LogLevel.Error, _log.Levels);
         Assert.DoesNotContain(Code, _log.All);
+    }
+
+    // ---- the real MailKit transport, against a local server that offers no STARTTLS
+
+    [Fact]
+    public async Task TheRealTransport_RefusesToSendCredentialsWithoutStartTls()
+    {
+        await using var server = new PlainSmtpServer();
+        var options = new SmtpOptions { Host = "127.0.0.1", Port = server.Port, Username = "lasttime.sender@example.test", Password = Password, SenderEmail = "lasttime.sender@example.test" };
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress("LastTime", options.SenderEmail));
+        message.To.Add(MailboxAddress.Parse("recipient@example.com"));
+        message.Subject = "x";
+        message.Body = new TextPart("plain") { Text = Code };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        await Assert.ThrowsAnyAsync<Exception>(() => MailKitSmtpTransport.SendAsync(options, message, cts.Token));
+
+        var seen = string.Join("\n", server.LinesReceived);
+        Assert.Contains("EHLO", seen); // it did connect and greet the server...
+        Assert.DoesNotContain("AUTH", seen, StringComparison.OrdinalIgnoreCase); // ...but never tried to log in
+        Assert.DoesNotContain("MAIL FROM", seen, StringComparison.OrdinalIgnoreCase); // ...and never sent anything
+        Assert.DoesNotContain(Code, seen);
+        Assert.DoesNotContain(Convert.ToBase64String(Encoding.ASCII.GetBytes(Password)), seen); // the password was never on the wire
+    }
+
+    [Fact]
+    public async Task TheSenderWithTheRealTransport_SwallowsThatFailure_AndLogsNoSecrets()
+    {
+        await using var server = new PlainSmtpServer();
+        var sender = new SmtpOtpSender(
+            MailKitSmtpTransport.SendAsync,
+            Options.Create(new SmtpOptions { Host = "127.0.0.1", Port = server.Port, Username = "lasttime.sender@example.test", Password = Password, SenderEmail = "lasttime.sender@example.test", SenderName = "LastTime" }),
+            _log);
+
+        await sender.SendAsync(Recipient, Otp.EmailVerification, Code, CancellationToken.None); // must not throw
+
+        Assert.Contains(LogLevel.Error, _log.Levels);
+        foreach (var secret in new[] { Code, Password, Recipient.Email })
+            Assert.DoesNotContain(secret, _log.All);
     }
 }
 
@@ -321,19 +470,22 @@ public class DailyLimitedOtpSenderTests
 [Collection(ApiCollection.Name)]
 public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
 {
-    private readonly RecordingHandler _provider = new();
+    private readonly RecordingTransport _smtp = new();
 
     public Task InitializeAsync() => factory.ResetAsync();
     public Task DisposeAsync() => Task.CompletedTask;
 
-    /// <summary>The real delivery registration, with Resend's HTTP replaced by a recording fake. No real email can be sent.</summary>
+    /// <summary>The real delivery registration, with the SMTP transport replaced by a recorder. No real email can be sent.</summary>
     private WebApplicationFactory<Program> Host(bool configured = true, int? dailyLimit = null)
     {
         var settings = new Dictionary<string, string?>
         {
-            ["Resend:ApiKey"] = configured ? "test-api-key" : "",
-            ["Resend:SenderEmail"] = configured ? "onboarding@resend.dev" : "",
-            ["Resend:SenderName"] = "LastTime",
+            ["Smtp:Host"] = "smtp.gmail.com",
+            ["Smtp:Port"] = "587",
+            ["Smtp:Username"] = configured ? "lasttime.sender@example.test" : "",
+            ["Smtp:Password"] = configured ? "test-app-password" : "",
+            ["Smtp:SenderEmail"] = configured ? "lasttime.sender@example.test" : "",
+            ["Smtp:SenderName"] = "LastTime",
             ["Email:DailyLimit"] = (dailyLimit ?? 100).ToString(),
         };
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
@@ -342,9 +494,10 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IOtpSender>();
-                services.RemoveAll<ResendOtpSender>();
+                services.RemoveAll<SmtpOtpSender>();
                 services.AddOtpDelivery(configuration); // the production registration, fed only the settings above
-                services.AddHttpClient(ResendOtpSender.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _provider);
+                services.RemoveAll<SmtpTransport>();
+                services.AddSingleton<SmtpTransport>(_smtp.AsTransport);
             }));
     }
 
@@ -360,7 +513,7 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
         await RegisterAsync(client, email);
         var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = "Password123!" });
         var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.Token;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         return client;
     }
 
@@ -375,18 +528,18 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal("", await response.Content.ReadAsStringAsync());
-        var email = Assert.Single(_provider.Requests);
+        var email = Assert.Single(_smtp.Messages);
         Assert.Equal(["user@example.com"], email.To);
-        Assert.Equal("LastTime <onboarding@resend.dev>", email.From);
-        Assert.Equal("Bearer test-api-key", email.Authorization);
+        Assert.Equal(("LastTime", "lasttime.sender@example.test"), (email.From.Name, email.From.Address));
+        Assert.Equal(("smtp.gmail.com", 587), (email.Options.Host, email.Options.Port));
         Assert.Contains("reset the password", email.Text);
 
         // The emailed code is the real one, and only the code is emailed (the reset token never is).
         var verify = await client.PostAsJsonAsync("/api/auth/verify-password-reset", new { email = "user@example.com", code = email.Code });
         Assert.Equal(HttpStatusCode.OK, verify.StatusCode);
         var token = (await verify.Content.ReadFromJsonAsync<PasswordResetTokenResponse>())!.ResetToken;
-        Assert.Single(_provider.Requests); // verifying sent nothing more
-        Assert.DoesNotContain(token, email.Body);
+        Assert.Single(_smtp.Messages); // verifying sent nothing more
+        Assert.DoesNotContain(token, email.Text);
     }
 
     [Fact]
@@ -398,7 +551,7 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
         var response = await client.PostAsync("/api/auth/resend-verification", null);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        var email = Assert.Single(_provider.Requests);
+        var email = Assert.Single(_smtp.Messages);
         Assert.Equal(["user@example.com"], email.To);
         Assert.Contains("verify your email address", email.Text);
         var verify = await client.PostAsJsonAsync("/api/auth/verify-email", new { code = email.Code });
@@ -406,12 +559,9 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WhenResendFails_TheApiAnswersExactlyAsBefore_WithoutProviderDetails()
+    public async Task WhenDeliveryFails_TheApiAnswersExactlyAsBefore_WithoutProviderDetails()
     {
-        _provider.Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
-        {
-            Content = JsonContent.Create(new { name = "validation_error", message = "provider internals" }),
-        });
+        _smtp.Behavior = _ => throw new SmtpCommandException(SmtpErrorCode.MessageNotAccepted, SmtpStatusCode.TransactionFailed, "provider internals");
         await using var host = Host();
         var client = host.CreateClient();
         await RegisterAsync(client, "user@example.com");
@@ -422,13 +572,13 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
         var body = await response.Content.ReadAsStringAsync();
         Assert.Equal("", body);
         Assert.DoesNotContain("provider", body, StringComparison.OrdinalIgnoreCase);
-        Assert.Single(_provider.Requests);
+        Assert.Single(_smtp.Messages);
     }
 
     [Fact]
     public async Task WhenTheNetworkFails_TheApiStillAnswersAccepted()
     {
-        _provider.Respond = (_, _) => throw new HttpRequestException("no route to host");
+        _smtp.Behavior = _ => throw new IOException("no route to host");
         await using var host = Host();
         var client = await SignedInAsync(host, "user@example.com");
 
@@ -436,7 +586,7 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task TheDailyLimit_StopsFurtherProviderCalls_WithoutChangingTheResponses()
+    public async Task TheDailyLimit_StopsFurtherSends_WithoutChangingTheResponses()
     {
         await using var host = Host(dailyLimit: 1);
         var client = host.CreateClient();
@@ -448,7 +598,7 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, second.StatusCode);
-        var only = Assert.Single(_provider.Requests); // the second email never reached Resend
+        var only = Assert.Single(_smtp.Messages); // the second email never reached SMTP
         Assert.Equal(["first@example.com"], only.To);
     }
 
@@ -460,7 +610,7 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WithoutResendSettings_NothingIsSent_AndTheApiStillWorks()
+    public async Task WithoutSmtpSettings_NothingIsSent_AndTheApiStillStarts_UsingTheNotConfiguredSender()
     {
         await using var host = Host(configured: false);
         var client = host.CreateClient();
@@ -469,14 +619,25 @@ public class OtpDeliveryWiringTests(ApiFactory factory) : IAsyncLifetime
         var response = await client.PostAsJsonAsync("/api/auth/forgot-password", new { email = "user@example.com" });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        Assert.Empty(_provider.Requests);
+        Assert.Empty(_smtp.Messages);
         Assert.IsType<NotConfiguredOtpSender>(host.Services.GetRequiredService<IOtpSender>());
     }
 
     [Fact]
-    public async Task WithResendSettings_TheLimitedResendSenderIsUsed()
+    public async Task WithSmtpSettings_TheSmtpSenderIsUsed_BehindTheDailyLimit()
     {
         await using var host = Host();
         Assert.IsType<DailyLimitedOtpSender>(host.Services.GetRequiredService<IOtpSender>());
+        Assert.NotNull(host.Services.GetRequiredService<SmtpOtpSender>());
+    }
+
+    [Fact]
+    public async Task TheStandardTestHost_CanNeverSendRealEmail()
+    {
+        // ApiFactory swaps the sender for a capturing one and the transport for one that refuses to run.
+        Assert.IsType<CapturingOtpSender>(factory.Services.GetRequiredService<IOtpSender>());
+        var transport = factory.Services.GetRequiredService<SmtpTransport>();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => transport(new SmtpOptions(), new MimeMessage(), CancellationToken.None));
+        Assert.False(factory.Services.GetRequiredService<IOptions<SmtpOptions>>().Value.IsConfigured);
     }
 }
