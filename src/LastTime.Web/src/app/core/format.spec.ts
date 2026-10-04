@@ -16,6 +16,13 @@ describe('relativeDate', () => {
     expect(relativeDate(date, now)).toBe(expected);
   });
 
+  it('handles boundary thresholds smoothly without ungrammatical or regressed counts', () => {
+    // Exactly 60 days ago (transition from days to months)
+    expect(relativeDate('2026-08-01', now)).toBe('2 months ago');
+    // Exactly 730 days ago (transition from months to years, 2 calendar years)
+    expect(relativeDate('2024-09-30', now)).toBe('2 years ago');
+  });
+
   it('is not thrown off by the time of day', () => {
     expect(relativeDate('2026-09-29', new Date(2026, 8, 30, 0, 5))).toBe('yesterday');
     expect(relativeDate('2026-09-29', new Date(2026, 8, 30, 23, 55))).toBe('yesterday');

@@ -13,8 +13,12 @@ export function relativeDate(dateIso: string, now: Date = new Date()): string {
   if (days === 0) return 'today';
   if (days === 1) return 'yesterday';
   if (days < 60) return `${days} days ago`;
-  if (days < 730) return `${Math.floor(days / 30.44)} months ago`;
-  return `${Math.floor(days / 365.25)} years ago`;
+  if (days < 730) {
+    const months = Math.max(2, Math.floor(days / 30.44));
+    return `${months} month${months === 1 ? '' : 's'} ago`;
+  }
+  const years = Math.max(2, Math.floor((days + 1) / 365.25));
+  return `${years} year${years === 1 ? '' : 's'} ago`;
 }
 
 /** Whole calendar days from one "YYYY-MM-DD" date to a later one (UTC math, so daylight saving cannot skew it). */

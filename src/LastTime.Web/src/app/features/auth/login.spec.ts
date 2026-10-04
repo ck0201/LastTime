@@ -24,11 +24,11 @@ describe('Login', () => {
     const fixture = TestBed.createComponent(Login);
     fixture.detectChanges();
     await fixture.whenStable();
-    return fixture.nativeElement as HTMLElement;
+    return { fixture, root: fixture.nativeElement as HTMLElement };
   }
 
   it('has a "Forgot password?" link to the forgot-password screen', async () => {
-    const root = await render();
+    const { root } = await render();
 
     const link = root.querySelector<HTMLAnchorElement>('a[href="/forgot-password"]')!;
     expect(link.textContent!.trim()).toBe('Forgot password?');
@@ -36,7 +36,7 @@ describe('Login', () => {
   });
 
   it('navigates to the forgot-password screen when the link is used', async () => {
-    const root = await render();
+    const { root } = await render();
     const router = TestBed.inject(Router);
 
     root.querySelector<HTMLAnchorElement>('a[href="/forgot-password"]')!.click();
@@ -46,7 +46,26 @@ describe('Login', () => {
   });
 
   it('still offers creating an account', async () => {
-    const root = await render();
+    const { root } = await render();
     expect(root.querySelector('a[href="/register"]')).not.toBeNull();
+  });
+
+  it('toggles password visibility when the eye icon is clicked', async () => {
+    const { fixture, root } = await render();
+    const passwordInput = root.querySelector<HTMLInputElement>('input[formControlName="password"]')!;
+    const toggleBtn = root.querySelector<HTMLButtonElement>('.password-toggle')!;
+
+    expect(passwordInput.type).toBe('password');
+    expect(toggleBtn.getAttribute('aria-label')).toBe('Show password');
+
+    toggleBtn.click();
+    fixture.detectChanges();
+    expect(passwordInput.type).toBe('text');
+    expect(toggleBtn.getAttribute('aria-label')).toBe('Hide password');
+
+    toggleBtn.click();
+    fixture.detectChanges();
+    expect(passwordInput.type).toBe('password');
+    expect(toggleBtn.getAttribute('aria-label')).toBe('Show password');
   });
 });
