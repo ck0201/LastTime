@@ -38,10 +38,9 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:Issuer", JwtIssuer);
         builder.UseSetting("Jwt:Audience", JwtAudience);
         builder.UseSetting("Jwt:ExpirationMinutes", "60");
-        // Never let real SMTP credentials (for example from user-secrets) reach a test run; tests never send real email.
-        builder.UseSetting("Smtp:Username", "");
-        builder.UseSetting("Smtp:Password", "");
-        builder.UseSetting("Smtp:SenderEmail", "");
+        // Never let a real Brevo key (for example from user-secrets) reach a test run; tests never send real email.
+        builder.UseSetting("Brevo:ApiKey", "");
+        builder.UseSetting("Brevo:SenderEmail", "");
         // Makes the test-only protected endpoint (TestProtectedController) available.
         builder.ConfigureTestServices(s =>
         {
@@ -50,9 +49,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             s.AddSingleton<TimeProvider>(Time);
             s.RemoveAll<IOtpSender>();
             s.AddSingleton<IOtpSender>(Sender);
-            // Defense in depth: even if something resolved the real sender, its transport refuses to open a connection.
-            s.RemoveAll<SmtpTransport>();
-            s.AddSingleton<SmtpTransport>((_, _, _) => throw new InvalidOperationException("Tests must never send real email."));
+            // Defense in depth: even if something resolved the real sender, its HTTP client refuses to reach Brevo.
+            s.AddHttpClient(BrevoOtpSender.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => new RefuseRealEmailHandler());
         });
     }
 

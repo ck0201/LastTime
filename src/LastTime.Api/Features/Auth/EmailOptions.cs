@@ -1,24 +1,15 @@
 namespace LastTime.Api.Features.Auth;
 
-/// <summary>
-/// Bound from the "Smtp" section. Gmail by default (smtp.gmail.com, port 587, STARTTLS). The username and password
-/// (a Gmail app password) come from user-secrets / environment variables, never from source control.
-/// </summary>
-public class SmtpOptions
+/// <summary>Bound from the "Brevo" section. The API key comes from user-secrets / environment variables, never from source control.</summary>
+public class BrevoOptions
 {
-    public const string SectionName = "Smtp";
+    public const string SectionName = "Brevo";
 
-    public string Host { get; set; } = "smtp.gmail.com";
-    public int Port { get; set; } = 587;
-    public string Username { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
     public string SenderEmail { get; set; } = string.Empty;
     public string SenderName { get; set; } = string.Empty;
 
-    public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(Host) && Port > 0 &&
-        !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password) &&
-        !string.IsNullOrWhiteSpace(SenderEmail);
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey) && !string.IsNullOrWhiteSpace(SenderEmail);
 }
 
 /// <summary>Bound from the "Email" section; applies to whichever provider sends the mail.</summary>

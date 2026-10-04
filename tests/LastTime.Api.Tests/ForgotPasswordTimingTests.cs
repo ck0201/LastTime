@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using LastTime.Api.Data;
 using LastTime.Api.Domain;
 using LastTime.Api.Features.Auth;
-using MailKit.Net.Smtp;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -114,26 +113,26 @@ public class ForgotPasswordTimingTests(ApiFactory factory) : IAsyncLifetime
     [Fact]
     public async Task WhenDeliveryFails_TheResponseIsStillPadded()
     {
-        var smtp = new RecordingTransport
+        var provider = new RecordingHandler
         {
-            Behavior = _ => throw new SmtpCommandException(SmtpErrorCode.MessageNotAccepted, SmtpStatusCode.TransactionFailed, "rejected"),
+            Respond = (_, _) => Task.FromResult(RecordingHandler.Refused(HttpStatusCode.InternalServerError, "server_error", "rejected")),
         };
-        await using var host = WithRealSender(smtp);
+        await using var host = WithRealSender(provider);
         var client = host.CreateClient();
         Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new { email = "user@example.com", password = "Password123!" })).StatusCode);
 
         var result = await ForgotAsync("user@example.com", client);
 
         Assert.Equal(HttpStatusCode.Accepted, result.Status);
-        Assert.Single(smtp.Messages); // SMTP was called, and failed
+        Assert.Single(provider.Requests); // Brevo was called, and failed
         Assert.Equal(Minimum, result.Elapsed);
     }
 
     [Fact]
-    public async Task WhenTheMailServerIsUnreachable_TheResponseIsStillPadded()
+    public async Task WhenTheProviderIsUnreachable_TheResponseIsStillPadded()
     {
-        var smtp = new RecordingTransport { Behavior = _ => throw new IOException("no route to host") };
-        await using var host = WithRealSender(smtp);
+        var provider = new RecordingHandler { Respond = (_, _) => throw new HttpRequestException("no route to host") };
+        await using var host = WithRealSender(provider);
         var client = host.CreateClient();
         await client.PostAsJsonAsync("/api/auth/register", new { email = "user@example.com", password = "Password123!" });
 
@@ -240,27 +239,25 @@ public class ForgotPasswordTimingTests(ApiFactory factory) : IAsyncLifetime
         Assert.True(Minimum <= TimeSpan.FromSeconds(5), $"minimum {Minimum} would make the endpoint feel broken");
     }
 
-    // ---- wiring: the real SMTP sender, with its transport replaced by a recorder
+    // ---- wiring: the real Brevo sender, with its HTTP replaced by a fake
 
-    private WebApplicationFactory<Program> WithRealSender(RecordingTransport smtp) =>
+    private WebApplicationFactory<Program> WithRealSender(RecordingHandler provider) =>
         factory.WithWebHostBuilder(builder =>
         {
             var settings = new Dictionary<string, string?>
             {
-                ["Smtp:Username"] = "lasttime.sender@example.test",
-                ["Smtp:Password"] = "test-app-password",
-                ["Smtp:SenderEmail"] = "lasttime.sender@example.test",
-                ["Smtp:SenderName"] = "LastTime",
+                ["Brevo:ApiKey"] = "xkeysib-test",
+                ["Brevo:SenderEmail"] = "lasttime.sender@example.test",
+                ["Brevo:SenderName"] = "LastTime",
                 ["Email:DailyLimit"] = "100",
             };
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IOtpSender>();
-                services.RemoveAll<SmtpOtpSender>();
+                services.RemoveAll<BrevoOtpSender>();
                 services.AddOtpDelivery(configuration);
-                services.RemoveAll<SmtpTransport>();
-                services.AddSingleton<SmtpTransport>(smtp.AsTransport);
+                services.AddHttpClient(BrevoOtpSender.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => provider);
             });
         });
 }
