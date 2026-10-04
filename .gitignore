@@ -1,4 +1,4 @@
-﻿# .NET
+# .NET
 bin/
 obj/
 *.user
@@ -20,4 +20,5 @@ logs/
 Thumbs.db
 
 # Local assistant notes (not part of the repo)
-CLAUDE.md
+gemini.md
+GEMINI.md
