@@ -1,5 +1,5 @@
 import { CurrencyPipe, DatePipe } from '@angular/common';
-import { Component, computed, inject, input, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, input, OnDestroy, OnInit, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
 import { actionKey, actionLabel } from '../../core/action-key';
@@ -30,7 +30,7 @@ const MAX_GAPS = 3;
   imports: [RouterLink, DatePipe, CurrencyPipe, HistoryEntryForm],
   templateUrl: './item-detail.html',
 })
-export class ItemDetailPage implements OnInit {
+export class ItemDetailPage implements OnInit, OnDestroy {
   private readonly api = inject(ItemsApi);
   private readonly router = inject(Router);
 
@@ -151,8 +151,51 @@ export class ItemDetailPage implements OnInit {
     return { shown: matches.slice(0, MAX_SHORTCUTS), more: matches.length > MAX_SHORTCUTS };
   });
 
+  /** Timestamp displayed in printable / PDF report. */
+  protected readonly exportDate = signal(new Date());
+
+  private originalTitleBeforePrint: string | null = null;
+
+  private readonly beforePrintListener = (): void => {
+    this.exportDate.set(new Date());
+    const current = this.item();
+    if (current && this.originalTitleBeforePrint === null) {
+      this.originalTitleBeforePrint = document.title;
+      const itemName = current.name?.trim() || 'Item';
+      document.title = `${itemName} - History Report - Last Time`;
+    }
+  };
+
+  private readonly afterPrintListener = (): void => {
+    if (this.originalTitleBeforePrint !== null) {
+      document.title = this.originalTitleBeforePrint;
+      this.originalTitleBeforePrint = null;
+    }
+  };
+
+  protected exportPdf(): void {
+    if (!this.item()) return;
+    this.closeMenu();
+    this.beforePrintListener();
+    if (typeof window !== 'undefined' && typeof window.print === 'function') {
+      window.print();
+    }
+    setTimeout(this.afterPrintListener, 2000);
+  }
+
   ngOnInit(): void {
     this.load();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeprint', this.beforePrintListener);
+      window.addEventListener('afterprint', this.afterPrintListener);
+    }
+  }
+
+  ngOnDestroy(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeprint', this.beforePrintListener);
+      window.removeEventListener('afterprint', this.afterPrintListener);
+    }
   }
 
   protected onLookupInput(event: Event): void {

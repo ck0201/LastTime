@@ -110,16 +110,16 @@ describe('ItemDetailPage', () => {
         expect(root.querySelector('.item-menu-toggle')).toBeNull();
       });
 
-      it('opens with Edit and a destructive Delete, and the toggle reports it is expanded', async () => {
+      it('opens with Edit, Export (PDF), and a destructive Delete, and the toggle reports it is expanded', async () => {
         const root = await render(detail);
         await open(root);
 
         expect(toggle(root).getAttribute('aria-expanded')).toBe('true');
-        expect(items(root)).toEqual(['Edit', 'Delete']);
+        expect(items(root)).toEqual(['Edit', 'Export (PDF)', 'Delete']);
         const edit = menu(root)!.querySelector('a.item-menu-item')!;
         expect(edit.getAttribute('href')).toBe('/items/i1/edit');
-        const del = menu(root)!.querySelector('button.item-menu-item')!;
-        expect(del.classList.contains('item-menu-danger')).toBe(true);
+        const del = menu(root)!.querySelector('button.item-menu-danger')!;
+        expect(del).not.toBeNull();
       });
 
       it('closes when the button is pressed again, on Escape, and on an outside click', async () => {
@@ -156,12 +156,49 @@ describe('ItemDetailPage', () => {
         expect(menu(root)).toBeNull();
       });
 
+      it('Export (PDF) triggers window.print and closes the menu', async () => {
+        const root = await render(detail);
+        await open(root);
+
+        const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+        const exportBtn = Array.from(menu(root)!.querySelectorAll<HTMLButtonElement>('button.item-menu-item'))
+          .find((b) => b.textContent?.trim() === 'Export (PDF)')!;
+        expect(exportBtn).not.toBeNull();
+
+        exportBtn.click();
+        await settle();
+
+        expect(printSpy).toHaveBeenCalledTimes(1);
+        expect(menu(root)).toBeNull();
+        printSpy.mockRestore();
+      });
+
+      it('Export (PDF) sets document title during print and restores it after', async () => {
+        const root = await render(detail);
+        await open(root);
+
+        const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+        const originalTitle = document.title;
+
+        const exportBtn = Array.from(menu(root)!.querySelectorAll<HTMLButtonElement>('button.item-menu-item'))
+          .find((b) => b.textContent?.trim() === 'Export (PDF)')!;
+        exportBtn.click();
+        await settle();
+
+        expect(document.title).toBe('LG AC - History Report - Last Time');
+
+        window.dispatchEvent(new Event('afterprint'));
+        expect(document.title).toBe(originalTitle);
+
+        printSpy.mockRestore();
+      });
+
       it('Delete asks for confirmation inside the menu, and confirming deletes the item', async () => {
         const root = await render(detail);
         const http = TestBed.inject(HttpTestingController);
         await open(root);
 
-        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-danger')!.click(); // Delete
         await settle();
         http.expectNone((r) => r.method === 'DELETE'); // nothing is deleted by the first tap
         expect(items(root)).toEqual(['Delete item and history?', 'Keep']);
@@ -173,11 +210,11 @@ describe('ItemDetailPage', () => {
         await settle();
       });
 
-      it('Keep closes the menu without deleting, and reopening starts again at Edit / Delete', async () => {
+      it('Keep closes the menu without deleting, and reopening starts again at Edit / Export / Delete', async () => {
         const root = await render(detail);
         const http = TestBed.inject(HttpTestingController);
         await open(root);
-        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-danger')!.click(); // Delete
         await settle();
 
         Array.from(menu(root)!.querySelectorAll<HTMLButtonElement>('button.item-menu-item'))
@@ -188,32 +225,70 @@ describe('ItemDetailPage', () => {
         http.expectNone((r) => r.method === 'DELETE');
 
         await open(root);
-        expect(items(root)).toEqual(['Edit', 'Delete']);
+        expect(items(root)).toEqual(['Edit', 'Export (PDF)', 'Delete']);
       });
 
       it('closing the menu with Escape abandons a half-finished delete confirmation', async () => {
         const root = await render(detail);
         await open(root);
-        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click(); // Delete
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-danger')!.click(); // Delete
         await settle();
 
         toggle(root).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         await settle();
         await open(root);
-        expect(items(root)).toEqual(['Edit', 'Delete']);
+        expect(items(root)).toEqual(['Edit', 'Export (PDF)', 'Delete']);
       });
 
       it('shows a delete failure below the header', async () => {
         const root = await render(detail);
         const http = TestBed.inject(HttpTestingController);
         await open(root);
-        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-item')!.click();
+        menu(root)!.querySelector<HTMLButtonElement>('button.item-menu-danger')!.click();
         await settle();
         menu(root)!.querySelector<HTMLButtonElement>('.item-menu-danger')!.click();
         http.expectOne((r) => r.method === 'DELETE').flush('no', { status: 500, statusText: 'Server Error' });
         await settle();
 
         expect(root.querySelector('.notice-error')!.textContent).toContain("Couldn't delete the item.");
+      });
+    });
+
+    describe('printable report', () => {
+      it('renders the item details and all history entries in a print table', async () => {
+        const root = await render(detail);
+        const report = root.querySelector('.print-report')!;
+        expect(report).not.toBeNull();
+        expect(report.getAttribute('aria-hidden')).toBe('true');
+
+        expect(report.querySelector('.print-title')?.textContent).toContain('LG AC');
+        expect(report.querySelector('.print-desc')?.textContent).toContain('Bedroom');
+        expect(report.querySelector('.print-meta')?.textContent).toContain('2 activities');
+        expect(report.querySelector('.print-meta')?.textContent).toContain('Total spending: ₹39,849');
+
+        const rows = Array.from(report.querySelectorAll('.print-table tbody tr'));
+        expect(rows.length).toBe(2);
+
+        // First row (Serviced)
+        expect(rows[0].querySelector('.col-date')?.textContent).toContain('12 Aug 2026');
+        expect(rows[0].querySelector('.col-action')?.textContent).toContain('Serviced');
+        expect(rows[0].querySelector('.col-provider')?.textContent).toContain('CoolCare Services');
+        expect(rows[0].querySelector('.col-cost')?.textContent).toContain('₹850');
+        expect(rows[0].querySelector('.col-notes')?.textContent).toContain('Gas checked');
+
+        // Second row (Purchased)
+        expect(rows[1].querySelector('.col-date')?.textContent).toContain('14 Mar 2024');
+        expect(rows[1].querySelector('.col-action')?.textContent).toContain('Purchased');
+        expect(rows[1].querySelector('.col-provider')?.textContent).toContain('—');
+        expect(rows[1].querySelector('.col-cost')?.textContent).toContain('₹38,999');
+        expect(rows[1].querySelector('.col-notes')?.textContent).toContain('—');
+      });
+
+      it('shows empty message when item has no history', async () => {
+        const root = await render({ ...detail, history: [] });
+        const report = root.querySelector('.print-report')!;
+        expect(report.querySelector('.print-table')).toBeNull();
+        expect(report.querySelector('.print-empty')?.textContent).toContain('No history recorded for this item.');
       });
     });
 

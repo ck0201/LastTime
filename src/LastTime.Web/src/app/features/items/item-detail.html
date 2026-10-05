@@ -25,6 +25,7 @@
             <button type="button" class="item-menu-item" (click)="closeMenu()">Keep</button>
           } @else {
             <a class="item-menu-item" [routerLink]="['/items', header.id, 'edit']" (click)="closeMenu()">Edit</a>
+            <button type="button" class="item-menu-item" (click)="exportPdf()">Export (PDF)</button>
             <button type="button" class="item-menu-item item-menu-danger" (click)="confirmDeleteItem.set(true)">Delete</button>
           }
         </div>
@@ -216,4 +217,62 @@
       </details>
     }
   }
+
+  <section class="print-report" aria-hidden="true">
+    <div class="print-header">
+      <div class="print-brand">Last Time</div>
+      <div class="print-title">{{ it.name }}</div>
+      @if (it.description) {
+        <p class="print-desc">{{ it.description }}</p>
+      }
+      <div class="print-meta">
+        <span>Exported {{ exportDate() | date: 'dd MMM yyyy, HH:mm' }}</span>
+        <span>·</span>
+        <span>{{ it.history.length }} {{ it.history.length === 1 ? 'activity' : 'activities' }}</span>
+        @if (insights(); as ins) {
+          @if (ins.total !== null) {
+            <span>·</span>
+            <span>Total spending: {{ ins.total | currency: 'INR' : 'symbol' : costFormat(ins.total) }}</span>
+          }
+        }
+      </div>
+    </div>
+
+    @if (it.history.length === 0) {
+      <p class="print-empty">No history recorded for this item.</p>
+    } @else {
+      <table class="print-table">
+        <thead>
+          <tr>
+            <th class="col-date">Date</th>
+            <th class="col-action">Activity</th>
+            <th class="col-provider">Provider</th>
+            <th class="col-cost">Cost</th>
+            <th class="col-notes">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (e of it.history; track e.id) {
+            <tr>
+              <td class="col-date">{{ e.date | date: 'dd MMM yyyy' }}</td>
+              <td class="col-action">{{ e.action }}</td>
+              <td class="col-provider">{{ e.provider || '—' }}</td>
+              <td class="col-cost">
+                @if (e.cost !== null) {
+                  {{ e.cost | currency: 'INR' : 'symbol' : costFormat(e.cost) }}
+                } @else {
+                  —
+                }
+              </td>
+              <td class="col-notes">{{ e.notes || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+
+    <div class="print-footer">
+      <span>Last Time · Personal Activity Tracker</span>
+    </div>
+  </section>
 }
